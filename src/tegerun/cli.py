@@ -1,4 +1,4 @@
-"""`tegerun` command line: one-time login, read-only Telegram message fetching, classification and notifications."""
+"""`tege` command line: one-time login, read-only Telegram message fetching, classification and notifications."""
 
 from __future__ import annotations
 
@@ -286,7 +286,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="tegerun", description="Read-only Telegram triage CLI: read, classify, notify via fast-mcp-telegram.")
+    p = argparse.ArgumentParser(prog="tege", description="Read-only Telegram triage CLI: read, classify, notify via fast-mcp-telegram.")
     sub = p.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("setup", help="one-time Telegram login (interactive)")

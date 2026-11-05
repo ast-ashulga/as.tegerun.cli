@@ -55,7 +55,7 @@ run:
 
 ### 4) One-time Telegram login
 ```bash
-tgrun setup  # or: uv run tgrun setup
+tege setup  # or: uv run tege setup
 ```
 Follow prompts (phone number, code, 2FA). Session saved to `.sessions/telegram.session`.
 
@@ -63,21 +63,21 @@ Follow prompts (phone number, code, 2FA). Session saved to `.sessions/telegram.s
 
 ```bash
 # Read recent messages from whitelisted chats
-tgrun read --limit 20
-tgrun read --chat 1234567890 --since 2h --json
+tege read --limit 20
+tege read --chat 1234567890 --since 2h --json
 
 # Classify messages (uses classifier/ questions and models)
-tgrun classify --limit 20
-tgrun classify --model d1-2B --dry-run
+tege classify --limit 20
+tege classify --model d1-2B --dry-run
 
 # Send a notification manually
-echo "Hello" | tgrun notify
-tgrun notify "Test message" --dry-run
+echo "Hello" | tege notify
+tege notify "Test message" --dry-run
 
 # Run continuously: read -> classify -> filter by thresholds -> notify
-tgrun run --once        # single pass (for cron/launchd)
-tgrun run               # repeat every run.every
-tgrun run --every 1h --no-send  # override interval, dry send
+tege run --once        # single pass (for cron/launchd)
+tege run               # repeat every run.every
+tege run --every 1h --no-send  # override interval, dry send
 ```
 
 ## Configuration Files
@@ -119,4 +119,4 @@ tegerun/
 - macOS support only currently
 - Uses `uv` for environment/dependency management
 - Model workers require setup via `classifier/setup.sh` (see classifier docs)
-- Session must exist before `read/classify/run/notify` (run `tgrun setup` first)
+- Session must exist before `read/classify/run/notify` (run `tege setup` first)

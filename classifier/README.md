@@ -16,7 +16,7 @@ All paths are relative to the project; nothing outside this repo is required.
 ```bash
 ./classifier/setup.sh                # create environments
 ./classifier/setup.sh --download d1-3B  # download weights (~6 GB) to HF cache
-uv run tegerun classify --since 24h --limit 50
+uv run tege classify --since 24h --limit 50
 ```
 
 Models run offline by default (HuggingFace cache only). Pass `--online` to allow network access.
