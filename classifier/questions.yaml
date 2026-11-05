@@ -13,12 +13,15 @@
 # Leave empty to disable skills-based questions. Keep it generic — avoid
 # employer names, personal addresses, phone numbers, or other private data.
 skills: |
-  Example: experienced product / delivery lead. Target roles include Engineering
-  Manager, Technical Program Manager, Delivery Manager, Release Train Engineer,
-  Scrum Master, iOS developer, AI/ML Engineer. Remote-first, full-time or
-  part-time contract (B2B OK). Preferred locations: EU/Georgia/Serbia/Cyprus/
-  Portugal/Greece/Montenegro. Not interested in: office-based full-time,
-  QA/testing, DevOps, sales, marketing, iGaming/crypto.
+  Кандидат: руководитель / координатор, частично исполнитель. 22 года в IT, последние 10 лет в продуктовой компании цифрового банкинга (fintech) с распределёнными командами.
+  Целевые роли: Release Train Engineer, Agile Program Manager, Delivery Manager / Head of Delivery, Engineering Manager (mobile, fintech), Technical Program Manager, AI Adoption / Enablement Lead, Developer Experience / Engineering Productivity Lead, Agile Coach / Head of Agile, Head of Engineering в стартапе, Technical Product Owner / Product Manager, Scrum Master, iOS developer, startup companion, AI / ML / LLM Engineer.
+  Опыт: Scrum Master и Agile-коуч, до десяти инженерных команд; SAFe на уровне Agile Release Train (PI planning, зависимости между командами, препятствия на уровне организации); поддержка Product Owner (бэклог, WSJF, MoSCoW, story mapping); инженеры в прямом подчинении (1:1, ревью, участие в найме); метрики потока и дашборды по Jira; Jira, Confluence, GitLab, Github, CI/CD.
+  ИИ: внедрение ИИ в инженерные процессы, внутренние ИИ-инструменты (Claude Code, Claude API, Agent SDK, CrewAI, LangChain/LangGraph, AWS Bedrock), ИИ-функции в проде, сообщество практики по ИИ. Это роль внедренца и энейблера, частично ML-инженера.
+  Инженерная база: iOS (Swift, SwiftUI, Objective-C), Android (Kotlin, Java), Python, TypeScript; читает код, в новой роли может писать код.
+  Уровень: нижняя планка — Middle Project Manager (и аналогичные менеджерские роли уровня middle), всё что выше — подходит, senior тем более. Роли выше (Director, VP, CTO, Head of в крупной или зрелой компании) — с опаской, не основная цель. Исключение: уровень Release Train Engineer и Head of / Engineering Manager в небольшой компании или стартапе — подходит; роли до CTO включительно подходят в молодых и начинающихся стартапах (pre-seed, seed, ранняя стадия). iOS developer подходит (вакансии iOS Developer кандидат готов рассматривать). AI / ML Engineer рассматривает как второстепенный вариант.
+  Языки: русский родной, английский C1. Обязательный третий язык (немецкий, испанский, грузинский и т. д.) — отказ.
+  Формат: удалёнка, полный день, от 3000 USD/мес; или частичная занятость от 1500 до 2000 USD/мес; B2B-контракт как ИП в Грузии подходит. Живёт в Батуми (Грузия), релокация только в Грузию, Испанию, Кипр, Грецию, Португалию, Сербию, Черногорию. Гражданин РФ: вакансии, где нельзя нанять гражданина РФ (только резиденты или граждане ЕС/США), не подходят.
+  Не интересует: работа разработчиком (Android, backend, Go), тестирование и QA, аналитика данных и BI, DevOps, продажи, Developer Advocate, поддержка клиентов, маркетинг и SMM, стажёры и junior; iGaming, казино, беттинг, крипто; полный день в офисе; поддержка legacy («keep the lights on»); ставка заметно ниже порога.
 
 # ── 2. Message templates ────────────────────────────────────────────────────
 # {message} — the chat message text; {skills} — your profile block above.
@@ -51,55 +54,126 @@ questions:
   is_vacancy:
     type: noul
     instructions: >-
-      Is this message a job vacancy — i.e. an employer or recruiter looking
-      to hire an employee or contractor for a specific position or project?
+      Это сообщение — вакансия, то есть работодатель или рекрутёр ищет
+      сотрудника или исполнителя на конкретную позицию или проект?
     needs_skills: false
 
   category:
     type: choice
-    instructions: What category does this message belong to?
+    instructions: К какой категории относится сообщение?
     criteria:
       vacancy: >-
-        Vacancy: company or recruiter hiring an employee/contractor/executive
-        (position, tasks, requirements or conditions described).
+        Вакансия: компания или рекрутёр ищет сотрудника/исполнителя/руководителя (описана позиция, задачи, требования или условия)
       resume: >-
-        Resume or self-promotion by someone seeking work or contracts.
+        Резюме или самореклама человека, который ищет работу или заказы
       ad: >-
-        Advertisement for products, services, courses, channels, partners
-        (including disguised as an "earning opportunity").
+        Реклама товаров, услуг, курсов, каналов, сервисов, партнёрок (в том числе замаскированная под «возможность заработка»)
       flood: >-
-        Flood / off-topic: chat, memes, questions unrelated to hiring,
-        reactions, greetings, news.
+        Флуд и офтоп: болтовня, мемы, вопросы, не относящиеся к найму, реакции, приветствия, новости
       other: >-
-        Other: rentals, sales, events, chat rules, etc.
+        Другое: объявление об аренде, продаже вещей, мероприятии, правила чата и т. п.
     needs_skills: false
 
   match:
     type: score
     instructions: >-
-      How well does this vacancy fit the candidate by role, level, and work
-      conditions?
+      Насколько эта вакансия подходит кандидату по роли, уровню и условиям работы?
     criteria:
       - >-
-        Poor fit: execution-role job (Android/backend/Go developer, QA,
-        analyst, DevOps, iOS developer not a blocker), sales, support,
-        marketing, junior/intern; or clear blockers (full-time office,
-        relocation outside preferred regions, mandatory third language,
-        cannot hire citizens of your country, Director/VP/CTO-level in a
-        large/mature company).
+        Не подходит: роль исполнителя (Android разработчик, QA, аналитик, DevOps;
+        iOS developer — не блокер), продажи, поддержка, маркетинг, junior или
+        стажёр (Middle Project Manager и выше — не блокер),
+        либо явный блокер (офис на полный день, релокация вне Грузии, Испании,
+        Кипра, Греции, Португалии, Сербии и Черногории, Европы, iGaming/крипто,
+        обязательный третий язык, нельзя нанять гражданина РФ), либо роль
+        заметно выше senior в крупной или зрелой компании (Director, VP, CTO;
+        CTO в молодом стартапе — не блокер)
       - >-
-        Weak match: adjacent field (product, analytics, technical writing...)
+        Слабое совпадение: смежная область (продукт, аналитика, технический
+        лидер), но роль не про delivery, управление командами
+        или внедрение ИИ; либо уровень или условия заметно не те
       - >-
-        Moderate match: relevant role but not the target level or conditions.
+        Частичное совпадение: подходящая роль (Product Owner, Scrum Master,
+        Agile Coach, менеджер проектов уровня Middle и выше, ML/AI-инженер,
+        iOS developer), но условия не указаны или есть
+        заметные пробелы: один продукт или одна команда, ставка или формат
+        неизвестны
       - >-
-        Good match: target role at the right level with acceptable conditions.
+        Хорошее совпадение: целевая роль (Delivery Manager, Engineering
+        Manager, TPM, Agile Program Manager, AI Enablement или Developer
+        Experience Lead; CTO или Head of Engineering в молодом стартапе),
+        удалёнка или Грузия, уровень senior или lead, блокеров нет
       - >-
-        Excellent match: target role, right level, remote-first, good pay.
+        Отличное совпадение: Release Train Engineer (в том числе в небольшой
+        компании), SAFe или управление несколькими командами, либо
+        руководство внедрением ИИ в инженерии; удалёнка, полный день или
+        B2B в Грузии, ставка не ниже 3000 USD или не указана, блокеров нет
     needs_skills: true
 
   match_ok:
     type: noul
     instructions: >-
-      Does this vacancy clearly meet the candidate's minimum bar (role,
-      level, remote format, pay range)?
+      Стоит ли кандидату откликнуться на эту вакансию, учитывая его роль,
+      уровень, формат работы, ставку и то, что ему не интересно?
     needs_skills: true
+
+  # ── Дополнительные вопросы (выключены) ───────────────────────────────────
+
+  remote:
+    enabled: false
+    type: noul
+    instructions: >-
+      В вакансии допускается полностью удалённая работа (удалёнка, remote,
+      из любой точки или из Грузии)?
+    needs_skills: false
+
+  seniority:
+    enabled: false
+    type: choice
+    instructions: На какой уровень специалиста рассчитана вакансия?
+    criteria:
+      junior: стажёр или джуниор, без опыта или опыт до года
+      middle: мидл, опыт примерно от 2 до 4 лет
+      senior: сеньор, опыт от 5 лет, ведущий специалист
+      lead: >-
+        тимлид, менеджер команды или программы, архитектор, Release Train
+        Engineer, Head of или CTO в молодом стартапе или небольшой компании
+        (уровень выше senior, но не топ-менеджмент зрелой компании)
+      executive: >-
+        директор, VP, CTO, Head of в крупной или зрелой компании
+        (топ-менеджмент, ответственность за целое направление)
+      unknown: уровень не указан
+    needs_skills: false
+
+  role_family:
+    enabled: false
+    type: choice
+    instructions: К какому семейству относится роль из вакансии?
+    criteria:
+      delivery: >-
+        Delivery, программы и процессы: Release Train Engineer, Delivery
+        Manager, Technical Program Manager, Scrum Master, Agile Coach,
+        менеджер проектов
+      engineering_management: >-
+        Управление инженерией: Engineering Manager, Head of Engineering,
+        CTO, тимлид с управлением людьми
+      ai_enablement: >-
+        Внедрение ИИ в организации и инженерные процессы: AI Adoption,
+        AI Enablement, Developer Experience, Engineering Productivity
+      product: >-
+        Продукт: Product Owner, Product Manager, Product Lead
+      engineering_ic: >-
+        Разработка и инженерия как исполнитель: backend, frontend, mobile,
+        DevOps, ML/AI Engineer, QA
+      other: >-
+        Всё остальное: аналитика, продажи, поддержка, маркетинг, дизайн,
+        HR, бухгалтерия
+    needs_skills: false
+
+  forbidden_topic:
+    enabled: false
+    type: noul
+    instructions: >-
+      Компания или продукт из вакансии связаны с азартными играми
+      (iGaming, казино, беттинг, гэмблинг) или криптовалютами?
+    needs_skills: false
