@@ -196,7 +196,7 @@ def test_classify_builds_verdicts_in_question_order(stand, settings):
     assert v.error is None and list(v.answers) == ["is_vacancy", "category", "match"]
     assert v.answers["is_vacancy"]["pred"] is True and v.answers["category"]["pred"] == "vacancy"
     assert v.answers["match"]["pred"] == 1 and v.answers["match"]["probs"] == {0: 0.1, 1: 0.6, 2: 0.3}
-    assert [classify.format_answer(a) for a in v.answers.values()] == ["P=0.90", "vacancy 0.80", "1.7 (ур.1)"]
+    assert [classify.format_answer(a) for a in v.answers.values()] == ["P=0.90", "vacancy 0.80", "1.7 (lvl.1)"]
 
 
 def test_collect_verdicts_reports_errors_missing_and_malformed(stand):
@@ -268,7 +268,7 @@ def test_cli_classify_json_and_text(stand, settings, tmp_path, monkeypatch, caps
     assert data["results"][0]["id"] == "1:7" and data["results"][0]["answers"]["is_vacancy"]["pred"] is True
     assert cli.main(["classify", "--input", str(f)]) == 0
     out = capsys.readouterr().out
-    assert "=== C (1) ===" in out and "is_vacancy: P=0.90 | category: vacancy 0.80 | match: 1.7 (ур.1)" in out
+    assert "=== C (1) ===" in out and "is_vacancy: P=0.90 | category: vacancy 0.80 | match: 1.7 (lvl.1)" in out
 
 
 def test_cli_classify_user_errors(stand, settings, tmp_path, monkeypatch, capsys):

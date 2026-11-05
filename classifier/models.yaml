@@ -1,20 +1,20 @@
-# Реестр моделей для `tege classify`. Имя — то, что передаётся в `tege classify --model ...`.
+# Model registry for `tege classify`. Name is what you pass to `tege classify --model ...`.
 #
-#   runner    воркер из workers/ (d1_worker | pplx_worker)
-#   venv      окружение, где крутится воркер (создаётся ./setup.sh)
-#   repo      репозиторий на Hugging Face
-#   revision  зафиксированный коммит. Модели грузят код из репозитория
-#             (trust_remote_code / source/), поэтому запускается именно та
-#             ревизия, которую можно просмотреть через ./fetch.py --code-only <имя>.
-#   grouping  joint  — все вопросы одной группы идут в одном запросе (один проход);
-#             single — каждый вопрос отдельным запросом.
-#             Карточка pplx-decider-flash советует single; d1 заточен под joint.
-#             Можно переопределить: tege classify --grouping single
+#   runner    worker from workers/ (d1_worker | pplx_worker)
+#   venv      environment where the worker runs (created by ./setup.sh)
+#   repo      Hugging Face repository
+#   revision  pinned commit. Models load code from the repository
+#             (trust_remote_code / source/), so exactly that
+#             revision is run, viewable via ./fetch.py --code-only <name>.
+#   grouping  joint  — all questions of one group go in a single request (one pass);
+#             single — each question as a separate request.
+#             pplx-decider-flash recommends single; d1 is tuned for joint.
+#             Override: tege classify --grouping single
 #   device    auto | cuda | mps | cpu
 #   dtype     auto | bf16 | fp16 | fp32
-#             d1: auto = bf16 на mps/cuda, fp32 на cpu (как в model card).
-#             pplx: auto = fp32 на mps/cpu (как в оригинальном коде, ~18 ГБ);
-#                   bf16 вдвое экономнее, но это отклонение от оригинала.
+#             d1: auto = bf16 on mps/cuda, fp32 on cpu (as in model card).
+#             pplx: auto = fp32 on mps/cpu (as in original code, ~18 GB);
+#                   bf16 is twice as efficient, but deviates from original.
 models:
 
   d1-2B:
@@ -30,7 +30,7 @@ models:
     runner: d1_worker
     venv: .venv-liquid
     repo: LiquidAI/d1-3B
-    revision: 051bcc464b01b9f92942b364d9586b0ef5912432   # код просмотрен
+    revision: 051bcc464b01b9f92942b364d9586b0ef5912432   # code reviewed
     grouping: joint
     device: auto
     dtype: auto

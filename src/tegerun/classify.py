@@ -340,12 +340,12 @@ def normalize_answer(q: dict[str, Any], ans: dict[str, Any]) -> dict[str, Any]:
 
 
 def format_answer(a: dict[str, Any]) -> str:
-    """Compact cell, e.g. `P=0.93`, `vacancy 0.88`, `3.2 (ур.3)`."""
+    """Compact cell, e.g. `P=0.93`, `vacancy 0.88`, `3.2 (lvl.3)`."""
     if a["type"] == "noul":
         return f"P={a['p']:.2f}"
     if a["type"] == "choice":
         return f"{a['pred']} {a['conf']:.2f}"
-    return f"{a['score']:.1f} (ур.{a['pred']})"
+    return f"{a['score']:.1f} (lvl.{a['pred']})"
 
 
 @dataclass

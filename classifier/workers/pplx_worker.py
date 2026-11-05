@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Воркер perplexity-ai/pplx-decider-flash-v1.2: читает requests.json, пишет out.json.
+"""perplexity-ai/pplx-decider-flash-v1.2 worker: reads requests.json, writes out.json.
 
-Запускается из tegerun/classify.py внутри .venv-pplx (Python 3.12, transformers==5.17.0, как в requirements.txt модели).
-Формат requests.json / out.json — как у d1_worker.py.
+Run from tegerun/classify.py inside .venv-pplx (Python 3.12, transformers==5.17.0, as in model requirements.txt).
+requests.json / out.json format — same as d1_worker.py.
 
-Заметки:
- • Код модели лежит в репозитории (source/src/pplx_decider) и подключается через sys.path — без pip install.
- • Оригинальный код рассчитан на CUDA. На Mac берётся референсный путь (fast=False) на mps/cpu в fp32
-   (~18 ГБ). --dtype bf16 приводит бэкбон и readout к bf16: быстрее и вдвое меньше памяти, но это
-   отклонение от оригинала (проверяйте качество).
- • Вероятности калиброваны температурой из decision_config.json (применяется внутри decide()).
+Notes:
+ • Model code lives in the repository (source/src/pplx_decider) and is connected via sys.path — no pip install.
+ • Original code is designed for CUDA. On Mac the reference path (fast=False) on mps/cpu in fp32 is taken
+   (~18 GB). --dtype bf16 brings backbone and readout to bf16: faster and half as much memory, but this
+   deviation from original (check quality).
+ • Probabilities are calibrated with temperature from decision_config.json (applied inside decide()).
 """
 
 from __future__ import annotations
@@ -38,28 +38,28 @@ def main() -> None:
         import transformers
         from huggingface_hub import snapshot_download
     except ImportError as e:
-        sys.exit(f"Нет модуля {e.name!r}: запустите ./setup.sh (интерпретатор: {sys.executable})")
+        sys.exit(f"No module {e.name!r}: run ./setup.sh (interpreter: {sys.executable})")
 
     repo, revision = cfg["repo"], cfg.get("revision")
     try:
         checkpoint = Path(snapshot_download(repo, revision=revision, local_files_only=not cfg.get("online")))
     except Exception as e:  # noqa: BLE001
-        sys.exit(f"Не удалось найти {repo} в кэше: {e}\nВыполните: ./setup.sh --download pplx-flash")
+        sys.exit(f"Failed to find {repo} in cache: {e}\nRun: ./setup.sh --download pplx-flash")
     if not (checkpoint / "readout.safetensors").exists() or not list(checkpoint.glob("model-*.safetensors")):
-        sys.exit(f"В {checkpoint} нет весов. Выполните: ./setup.sh --download pplx-flash")
+        sys.exit(f"No weights in {checkpoint}. Run: ./setup.sh --download pplx-flash")
     sys.path.insert(0, str(checkpoint / "source" / "src"))
-    from pplx_decider import Decider  # код из репозитория модели (ревизия зафиксирована в models.yaml)
+    from pplx_decider import Decider  # code from model repository (revision pinned in models.yaml)
 
     device = cfg.get("device", "auto")
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     dtype_name = cfg.get("dtype", "auto")
 
-    print(f"[pplx] загрузка {repo}@{(revision or 'main')[:8]} на {device}"
-          f"{'' if cfg.get('online') else ' (офлайн)'} ...", flush=True)
+    print(f"[pplx] loading {repo}@{(revision or 'main')[:8]} on {device}"
+          f"{'' if cfg.get('online') else  ' (offline)'} ...", flush=True)
     t0 = time.perf_counter()
     decider = Decider(checkpoint, device="cpu" if device == "mps" else device, fast=False)
-    # Decider грузит в fp32 на не-CUDA; приводим dtype и переносим на устройство.
+    # Decider loads in fp32 on non-CUDA; we cast dtype and move to device.
     if dtype_name == "bf16":
         decider.backbone.to(torch.bfloat16)
         decider.readout.to(torch.bfloat16)
@@ -67,14 +67,14 @@ def main() -> None:
         decider.backbone.to(torch.float16)
         decider.readout.to(torch.float16)
     elif dtype_name == "auto" and device == "cuda":
-        pass  # Decider уже выбрал bf16 на CUDA
+        pass  # Decider already chose bf16 on CUDA
     if device == "mps":
         decider.backbone.to("mps")
         decider.readout.to("mps")
         decider.device = torch.device("mps")
     load_s = time.perf_counter() - t0
     actual_dtype = str(next(decider.backbone.parameters()).dtype).split(".")[-1]
-    print(f"[pplx] готово за {load_s:.1f} с (dtype={actual_dtype})", flush=True)
+    print(f"[pplx] ready in {load_s:.1f} s (dtype={actual_dtype})", flush=True)
 
     def sync() -> None:
         if device == "cuda":
