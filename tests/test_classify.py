@@ -429,12 +429,20 @@ def test_worker_failure_is_a_runtime_error_not_a_usage_error(stand, settings, tm
     assert "exit code 9" in capsys.readouterr().err
 
 
-def test_a_request_the_worker_never_answered_is_marked_transient(stand):
+def test_only_the_first_unanswered_message_is_blamed_when_a_worker_dies(stand):
+    qset = _qset(stand)
+    items = [classify.Item(id=f"1:{i}", text="a", chat_id="1", chat="C", msg_id=i) for i in (1, 2, 3)]
+    _, rid_map = classify.build_requests(items, qset, "joint")
+    v1, v2, v3 = classify.collect_verdicts(items, qset, rid_map, {"results": []})
+    assert v1.error == v2.error == v3.error == "no result from the model"
+    # the worker was on message 1 when it died: it counts against it, the two it never reached do not
+    assert (v1.transient, v2.transient, v3.transient) == (False, True, True)
+
+
+def test_an_error_the_worker_reported_for_a_message_is_never_transient(stand):
     qset = _qset(stand)
     items = [classify.Item(id="1:1", text="a", chat_id="1", chat="C", msg_id=1)]
     _, rid_map = classify.build_requests(items, qset, "joint")
-    [v] = classify.collect_verdicts(items, qset, rid_map, {"results": []})
-    assert v.error == "no result from the model" and v.transient is True
-    err_rid = next(iter(rid_map))
-    [v2] = classify.collect_verdicts(items, qset, rid_map, {"results": [{"rid": err_rid, "error": "ValueError: bad"}]})
-    assert v2.transient is False  # an error the worker reported for this message is the message's
+    rid = next(iter(rid_map))
+    [v] = classify.collect_verdicts(items, qset, rid_map, {"results": [{"rid": rid, "error": "ValueError: bad"}]})
+    assert v.transient is False

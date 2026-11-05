@@ -637,3 +637,25 @@ async def test_messages_the_worker_never_reached_are_not_blamed(tmp_path):
     for _ in range(3):
         await h.run(_run_settings(max_attempts=1))
     assert h.state.failures("c1:2") == 0 and h.state.failures("c1:3") == 0  # never skipped for the worker's death
+
+
+async def test_the_message_a_worker_keeps_dying_on_is_eventually_skipped(tmp_path):
+    h = Harness(tmp_path, _msgs(1, 2, 3))
+
+    def dies_on_message_2(items):
+        out, dead = [], False
+        for i in items:
+            if dead or i.msg_id == 2:
+                dead = True
+                out.append(classify.Verdict(i, {}, "no result from the model", transient=i.msg_id != 2))
+            else:
+                out.append(classify.Verdict(i, _answers()))
+        return out
+
+    h.classify_items = dies_on_message_2
+    settings = _run_settings(max_attempts=2)
+    for _ in range(2):
+        assert (await h.run(settings)).ok is False
+    assert h.state.failures("c1:2") == 2 and h.state.failures("c1:3") == 0
+    final = await h.run(settings)  # 2 is skipped now, 3 is classified, nothing holds the window
+    assert final.ok is True and h.state.last_success == NOW

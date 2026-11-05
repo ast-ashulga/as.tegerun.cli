@@ -401,7 +401,8 @@ class Verdict:
     answers: dict[str, dict[str, Any]] = field(default_factory=dict)
     error: str | None = None
     # The worker never got to this message (it crashed or timed out earlier in the batch), so the
-    # failure says nothing about the message itself and must not count against it.
+    # failure says nothing about the message itself and must not count against it. The one exception
+    # is the first message without a result: that is the one the worker was busy with when it died.
     transient: bool = False
 
 
@@ -429,11 +430,13 @@ def collect_verdicts(
             answered.add(rid)
         except (KeyError, TypeError, ValueError) as exc:
             v.error = f"malformed answer ({type(exc).__name__}: {exc})"
+    in_progress: str | None = None  # requests run in order, so the first unanswered one is where it stopped
     for rid, (item_id, _) in rid_map.items():
         v = verdicts[item_id]
         if rid not in answered and v.error is None:
             v.error = "no result from the model"
-            v.transient = True
+            in_progress = in_progress or item_id
+            v.transient = item_id != in_progress
     # keep the questions.yaml order in answers
     order = list(qset.questions)
     for v in verdicts.values():
