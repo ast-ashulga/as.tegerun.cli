@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tegerun import classify, cli, config, notifier, reader, runner, runstate
+from tegerun import classify, cli, config, notifier, preflight, reader, runner, runstate
 
 CHAT = "-1003842301085"
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)
@@ -296,6 +296,12 @@ def _msgs(*ids):
     return [{"id": i, "text": f"vacancy {i}", "date": "2026-11-04T11:00:00", "link": f"https://t.me/c/1/{i}"} for i in ids]
 
 
+async def test_a_pass_records_the_best_value_seen_per_threshold_question(tmp_path):
+    h = Harness(tmp_path, _msgs(1, 2, 3), {1: {"is_vacancy": 0.3, "match": 1.0}, 2: {"is_vacancy": 0.6, "match": 2.0}, 3: "error"})
+    report = await h.run()
+    assert report.best == {"is_vacancy": 0.6, "match": 2.0, "match_ok": 0.9}
+
+
 async def test_pass_sends_each_match_as_its_own_message_and_records_them(tmp_path):
     h = Harness(tmp_path, _msgs(1, 2, 3), {2: {"match": 1.0}})  # message 2 is weak
     report = await h.run()
@@ -418,6 +424,7 @@ def cli_env(monkeypatch, tmp_path):
     monkeypatch.setattr(classify, "load_models", lambda p: {"m": SimpleNamespace(grouping="joint")})
     monkeypatch.setattr(config, "load_notify_settings", lambda *a, **k: config.NotifySettings(True, CHAT, None))
     monkeypatch.setattr(config, "load_run_settings", lambda *a, **k: _run_settings(send=False))
+    monkeypatch.setattr(preflight, "check", lambda **k: [])  # the real one looks at this machine; see test_preflight.py
 
     async def fake_pass(*a, **k):
         rec.passes += 1
@@ -441,14 +448,38 @@ def test_cli_run_once_exits_one_when_the_pass_had_errors(cli_env):
     assert cli.main(["run", "--once"]) == 1
 
 
-def test_cli_run_without_once_hands_over_to_the_loop_with_the_configured_interval(cli_env):
+def test_cli_run_is_a_single_pass_by_default(cli_env):
     assert cli.main(["run"]) == 0
+    assert cli_env.passes == 1 and cli_env.loop_every is None
+
+
+def test_cli_loop_hands_over_to_the_loop_with_the_configured_interval(cli_env):
+    assert cli.main(["run", "--loop"]) == 0
     assert cli_env.loop_every == timedelta(minutes=30) and cli_env.passes == 0
 
 
-def test_cli_every_overrides_the_interval(cli_env):
+def test_cli_every_implies_the_loop_and_overrides_the_interval(cli_env):
     cli.main(["run", "--every", "2h"])
-    assert cli_env.loop_every == timedelta(hours=2)
+    assert cli_env.loop_every == timedelta(hours=2) and cli_env.passes == 0
+
+
+def test_cli_once_and_loop_exclude_each_other(cli_env):
+    with pytest.raises(SystemExit):
+        cli.main(["run", "--once", "--loop"])
+
+
+def test_cli_run_stops_with_the_to_do_list_when_setup_is_unfinished(cli_env, monkeypatch, capsys):
+    todo = [preflight.Finding("error", "Not logged in to Telegram yet.", "uv run tege setup")]
+    monkeypatch.setattr(preflight, "check", lambda **k: todo)
+    assert cli.main(["run"]) == 2
+    err = capsys.readouterr().err
+    assert "Not logged in" in err and "uv run tege setup" in err and cli_env.passes == 0
+
+
+def test_cli_run_goes_on_when_there_are_only_recommendations(cli_env, monkeypatch, capsys):
+    monkeypatch.setattr(preflight, "check", lambda **k: [preflight.Finding("warning", "skills is an example", "edit it")])
+    assert cli.main(["run"]) == 0
+    assert "skills is an example" in capsys.readouterr().err and cli_env.passes == 1
 
 
 def test_cli_send_flag_with_notifications_disabled_is_an_error(cli_env, monkeypatch, capsys):

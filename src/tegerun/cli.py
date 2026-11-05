@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from tegerun import classify, config, notifier, reader, runner, runstate
+from tegerun import classify, config, notifier, preflight, reader, runner, runstate
 from tegerun.textutil import printable
 
 
@@ -241,7 +241,24 @@ def cmd_notify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _preflight(args: argparse.Namespace) -> int | None:
+    """Print what is still missing. Returns exit code 2 if `run` cannot work yet, else None."""
+    findings = preflight.check(model_name=args.model, send=args.send, online=args.online)
+    if text := preflight.render(findings):
+        print(text, file=sys.stderr)
+    return 2 if preflight.errors(findings) else None
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    code = _preflight(args)
+    if code is None:
+        print("Everything needed for `tege run` is in place. Next: uv run tege run", file=sys.stderr)
+    return code or 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
+    if (code := _preflight(args)) is not None:
+        return code
     run = config.load_run_settings()
     if args.every:
         run = dataclasses.replace(run, every=config.parse_duration(args.every, "--every"))
@@ -284,6 +301,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"[send is off] would send:\n{printable(text)}\n")
         for err in report.errors:
             print(f"error: {printable(err)}", file=sys.stderr)
+        for hint in runner.explain(report, run):
+            print(f"hint: {hint}", file=sys.stderr)
         print(
             f"Pass: read {report.read}, classified {report.classified}, matched {report.matched}, "
             f"sent {report.sent}{'' if report.ok else ' (window not advanced)'}.",
@@ -293,7 +312,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     with runstate.RunLock():  # two runs at once would race on the state files and double-send
         state = runstate.RunState()
-        if args.once:
+        if not (args.loop or args.every):  # one pass is the default; --loop (or --every) repeats it
+            how = "sending matches" if run.send else "preview only, nothing is sent"
+            print(f"One pass with {name}: {how}.", file=sys.stderr)
             return 0 if one_pass(state).ok else 1
         print(f"Running every {run.every}; send is {'ON' if run.send else 'off'}. Ctrl+C to stop.", file=sys.stderr)
         runner.run_loop(lambda: one_pass(state), run.every)
@@ -347,12 +368,21 @@ def build_parser() -> argparse.ArgumentParser:
     n.add_argument("--verbose", action="store_true", default=False, help="show MCP server logs on stderr")
     n.set_defaults(func=cmd_notify)
 
+    d = sub.add_parser("doctor", help="check what is missing for `tege run` and how to fix it; runs nothing")
+    d.add_argument("--model", help="model from classifier/models.yaml (default: classify.model)")
+    d.add_argument("--send", action=argparse.BooleanOptionalAction, default=None, help="check as if sending were on/off (default: run.send)")
+    d.add_argument("--online", action="store_true", default=False, help="the worker may download the model itself")
+    d.set_defaults(func=cmd_doctor)
+
     u = sub.add_parser(
         "run",
-        help="read -> classify -> keep matches above the thresholds -> send; repeats every run.every (see run: in .config.yaml)",
+        help="check the setup, then one pass: read -> classify -> keep matches above the thresholds -> send "
+        "(preview only unless sending is enabled); --loop repeats it every run.every",
     )
-    u.add_argument("--once", action="store_true", default=False, help="a single pass, then exit (for cron/launchd)")
-    u.add_argument("--every", help="pause between passes, e.g. 30m, 1h, 3h (default: run.every)")
+    mode = u.add_mutually_exclusive_group()
+    mode.add_argument("--once", action="store_true", default=False, help="a single pass, then exit (the default; kept for cron/launchd lines)")
+    mode.add_argument("--loop", action="store_true", default=False, help="keep running: repeat the pass every run.every")
+    u.add_argument("--every", help="pause between passes, e.g. 30m, 1h, 3h (default: run.every); implies --loop")
     u.add_argument(
         "--send", action=argparse.BooleanOptionalAction, default=None,
         help="deliver matches to Telegram / only print them (default: run.send; needs notify.enabled)",

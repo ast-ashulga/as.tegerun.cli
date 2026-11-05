@@ -21,7 +21,8 @@ uv run tege read --limit 20 [--chat ID] [--since 2h] [--json]
 uv run tege classify --dry-run            # print worker requests; loads no model
 uv run tege classify --input msgs.jsonl   # classify a JSONL file instead of reading Telegram
 uv run tege notify "text" --dry-run
-uv run tege run --once [--no-send]        # one read->classify->filter->send pass
+uv run tege run [--no-send] [--loop]      # preflight, then one read->classify->filter->send pass (--loop/--every repeat)
+uv run tege doctor                        # preflight only: what is missing for `run` and how to fix it
 
 ./classifier/setup.sh                     # create classifier venvs (.venv-liquid, .venv-pplx)
 ./classifier/setup.sh --download d1-3B    # download model weights to the HF cache
@@ -45,7 +46,8 @@ Package `src/tegerun/`. `cli.py` builds the argparse subcommands and turns `Conf
   5. Send at most `max_per_run`; stop after two send failures in a row.
   6. Advance `last_success` only when the pass sent for real (`run.send`), had no errors (including an unreadable overflow, `has_more`) and no leftover matches. The next pass then re-reads the same window, and `sent.json` prevents duplicates. A preview (send off) changes no state.
 
-  `cmd_run` holds `runstate.RunLock` (flock on `.state/run.lock`) so two runs cannot race. `RunState` writes atomically (tmp file + fsync + `os.replace`). A corrupt state file raises an error and is never reset, because a reset would resend everything. `run_loop()` logs a failing pass and keeps the schedule going.
+  `cmd_run` holds `runstate.RunLock` (flock on `.state/run.lock`) so two runs cannot race. `RunState` writes atomically (tmp file + fsync + `os.replace`). A corrupt state file raises an error and is never reset, because a reset would resend everything. `tege run` is one pass by default; `--loop` (or `--every`) hands the pass to `run_loop()`, which logs a failing pass and keeps the schedule going. After a pass `runner.explain()` turns the `PassReport` (including `best`, the highest value seen per threshold question) into hints.
+- **First-run preflight (`preflight.py`)**: `cmd_run` and `tege doctor` call `preflight.check()` first. It only looks at files, YAML and the Hugging Face cache on disk (never runs setup, downloads, or imports ML libraries) and returns every problem at once as `Finding`s: `error` stops `run` with a numbered to-do list (exit 2), `warning` is a recommendation and the run goes on. Weights count as present only if the pinned snapshot holds a weight file (`--code-only` leaves none). Example values shipped in `.config.yaml` / `.env.example` are recognised by constants in `preflight.py`; `tests/test_preflight.py` keeps them in sync, so change both together. Tests that drive `cmd_run` stub `preflight.check`.
 
 ## Conventions and gotchas
 

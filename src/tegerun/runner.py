@@ -46,15 +46,19 @@ def validate_thresholds(thresholds: dict[str, float], qset: classify.QuestionSet
             raise ConfigError(f"run.thresholds.{qid}: {thresholds[qid]} can never be reached; use a value in 0..{top}.")
 
 
+def _value(answer: dict | None) -> float | None:
+    """The number a threshold is compared with: P for a yes/no question, the score for a scale one."""
+    if answer is None:
+        return None
+    return answer["p"] if answer["type"] == "noul" else answer.get("score")
+
+
 def passes_thresholds(verdict: classify.Verdict, thresholds: dict[str, float]) -> bool:
     """True if the message reached every threshold. Errored or unanswered questions never pass."""
     if verdict.error:
         return False
     for qid, minimum in thresholds.items():
-        answer = verdict.answers.get(qid)
-        if answer is None:
-            return False
-        value = answer["p"] if answer["type"] == "noul" else answer.get("score")
+        value = _value(verdict.answers.get(qid))
         if value is None or value < minimum:
             return False
     return True
@@ -88,6 +92,7 @@ class PassReport:
     sent: int = 0
     would_send: list[str] = field(default_factory=list)  # filled instead of sending when run.send is off
     errors: list[str] = field(default_factory=list)
+    best: dict[str, float] = field(default_factory=dict)  # per threshold question: the highest value seen
 
 
 def _key(item: classify.Item) -> str:
@@ -144,6 +149,11 @@ async def run_pass(
         for v in blamable:
             state.record_failure(_key(v.item))
 
+    for qid in run.thresholds:
+        seen = [x for v in verdicts if not v.error and (x := _value(v.answers.get(qid))) is not None]
+        if seen:
+            report.best[qid] = max(seen)
+
     matches = [v for v in verdicts if passes_thresholds(v, run.thresholds)]
     report.matched = len(matches)
     batch, rest = matches[: run.max_per_run], matches[run.max_per_run :]
@@ -179,6 +189,37 @@ async def run_pass(
         # (send off) leaves the window alone, otherwise looking at matches would consume them.
         state.mark_success(now)
     return report
+
+
+# ───────────────────────────────────────────────────────── what to tell the user afterwards
+
+
+def _num(value: float) -> str:
+    return f"{value:g}" if float(value).is_integer() else f"{value:.2f}"
+
+
+def explain(report: PassReport, run: config.RunSettings) -> list[str]:
+    """Plain-language hints after a pass: why nothing matched, or how to start sending."""
+    if report.errors:
+        return []  # the errors are the story; do not pile guesses on top
+    if report.read == 0:
+        return [
+            f"No messages to look at (the first pass reads back {run.first_window}). Check `whitelist` in "
+            ".config.yaml, or widen run.first_window (e.g. 7d) for quiet chats."
+        ]
+    hints: list[str] = []
+    if report.classified and not report.matched:
+        best = ", ".join(f"{q} {_num(v)} (needs {_num(run.thresholds[q])})" for q, v in report.best.items())
+        hints.append(
+            f"Nothing passed all thresholds. Best scores seen: {best}. Too strict? Lower run.thresholds in "
+            ".config.yaml. Nothing relevant at all? Check the questions and `skills:` in classifier/questions.yaml."
+        )
+    if report.matched and not run.send:
+        hints.append(
+            "These matches were only printed. To send them for real set notify.enabled: true and run.send: true "
+            "in .config.yaml (or pass --send)."
+        )
+    return hints
 
 
 # ───────────────────────────────────────────────────────── the loop
