@@ -50,7 +50,7 @@ def main() -> None:
 
     repo, revision = cfg["repo"], cfg.get("revision")
     print(f"[d1] loading {repo}@{(revision or 'main')[:8]} on {device}, "
-          f"{str(dtype).split('.')[-1]}{'' if cfg.get('online') else , offline'} ...", flush=True)
+          f"{str(dtype).split('.')[-1]}{'' if cfg.get('online') else ', offline'} ...", flush=True)
     t0 = time.perf_counter()
     try:
         model = AutoModel.from_pretrained(repo, trust_remote_code=True, dtype=dtype, revision=revision)

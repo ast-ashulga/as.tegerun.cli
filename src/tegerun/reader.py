@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from tegerun.mcp_client import open_session
+from tegerun import mcp_client
 
 _REL = re.compile(r"^(\d+)\s*([mhdw])$")
 _UNITS = {"m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
