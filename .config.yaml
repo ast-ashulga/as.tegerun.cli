@@ -1,0 +1,37 @@
+# Chats the bot is allowed to read. `id` and `name` are required, `description` is optional.
+# Replace the examples below with your own chats. Telegram numeric IDs or @usernames.
+# Quote ids that are not plain numbers (e.g. "@username").
+whitelist:
+  - id: "1234567890"
+    name: "Example Jobs Channel"
+    description: "Replace with a chat you want to monitor."
+  - id: "@example_chat"
+    name: "Example Public Chat"
+    description: "Example of a @username chat id."
+
+# `tegerun classify`: ./classifier holds questions.yaml, models.yaml, the model workers and their venvs
+# (create them once: ./classifier/setup.sh). All keys are optional; the defaults are shown.
+classify:
+  classifier_dir: classifier
+  model: d1-3B
+
+# `tegerun notify` / notifier.send_notification(): where to send messages.
+# Sent from the logged-in Telegram account via fast-mcp-telegram. Nothing is sent unless enabled: true.
+notify:
+  enabled: false
+  chat_id: "-1001234567890"
+  topic_id: 123
+  # reply_to: 456
+
+# `tegerun run`: read -> classify -> keep matches above thresholds -> send.
+# `tegerun run --once` is a single pass (cron/launchd); plain `tegerun run` repeats every run.every.
+run:
+  every: 30m
+  first_window: 24h
+  limit: 100
+  send: false
+  max_per_run: 10
+  thresholds:
+    is_vacancy: 0.8
+    match_ok: 0.55
+    match: 3
