@@ -101,9 +101,41 @@ uv run tege notify "Test" --dry-run         # 4. check the notify target
 ```
 When the output looks right, point `notify.chat_id` at where matches should go (`"me"` is your own Saved Messages, a safe place for a first try), set `notify.enabled: true` and `run.send: true` in `.config.yaml`, then:
 ```bash
-uv run tege run          # one real pass (use it from cron/launchd)
-uv run tege run --loop   # or keep running every run.every
+uv run tege run          # one real pass
+uv run tege run --loop   # or keep running every run.every (see "Run it continuously")
 ```
+
+## Run it continuously
+
+Turn sending on first (`notify.enabled: true` and `run.send: true`): a preview does not move the window, so every pass would re-read and re-classify the same messages.
+
+**In a terminal.** Simplest; runs while the terminal stays open (Ctrl+C stops it):
+```bash
+uv run tege run --loop            # a pass every run.every (default 30m)
+uv run tege run --every 1h        # or choose the interval here; --every implies --loop
+```
+A failing pass is logged and the schedule goes on.
+
+**In the background (macOS, launchd).** Let the system start one pass every 30 minutes. It survives closing the terminal, sleep and reboot, and a failed run does not block the next one. Save this as `~/Library/LaunchAgents/com.tegerun.run.plist`, replacing both `/path/to/...` values (`which uv` prints the uv path):
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.tegerun.run</string>
+  <key>WorkingDirectory</key><string>/path/to/as.tegerun.cli</string>
+  <key>ProgramArguments</key><array>
+    <string>/path/to/uv</string><string>run</string><string>tege</string><string>run</string>
+  </array>
+  <key>StartInterval</key><integer>1800</integer>
+  <key>StandardErrorPath</key><string>/path/to/as.tegerun.cli/logs/launchd.log</string>
+</dict></plist>
+```
+```bash
+launchctl load ~/Library/LaunchAgents/com.tegerun.run.plist     # start
+tail -f logs/launchd.log                                        # watch the passes
+launchctl unload ~/Library/LaunchAgents/com.tegerun.run.plist   # stop
+```
+Two runs never overlap (`.state/run.lock`). Each pass loads the model again (a few seconds), which is fine at a 30-minute interval.
 
 ## Make it yours
 
