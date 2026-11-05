@@ -1,0 +1,105 @@
+# tegerun classifier questions + optional candidate skills/profile.
+# Edit this file to match your own needs. Models receive `state` (the message,
+# plus the skills block when a question sets needs_skills: true) and answer
+# each question with probabilities/scores — they never generate text.
+#
+# Sections:
+#   1. `skills` — your candidate profile / wishes (substituted as {skills})
+#   2. `state_template` / `state_template_with_skills` — message templates
+#   3. `questions` — the actual questions, keyed by id (used as answer ids)
+
+# ── 1. Your skills / candidate profile ──────────────────────────────────────
+# Substituted into state only for questions with `needs_skills: true`.
+# Leave empty to disable skills-based questions. Keep it generic — avoid
+# employer names, personal addresses, phone numbers, or other private data.
+skills: |
+  Example: experienced product / delivery lead. Target roles include Engineering
+  Manager, Technical Program Manager, Delivery Manager, Release Train Engineer,
+  Scrum Master, iOS developer, AI/ML Engineer. Remote-first, full-time or
+  part-time contract (B2B OK). Preferred locations: EU/Georgia/Serbia/Cyprus/
+  Portugal/Greece/Montenegro. Not interested in: office-based full-time,
+  QA/testing, DevOps, sales, marketing, iGaming/crypto.
+
+# ── 2. Message templates ────────────────────────────────────────────────────
+# {message} — the chat message text; {skills} — your profile block above.
+state_template: |
+  Message from the messenger:
+  """
+  {message}
+  """
+
+# Used for questions with needs_skills: true.
+state_template_with_skills: |
+  Message from the messenger:
+  """
+  {message}
+  """
+
+  Candidate profile (skills and preferences):
+  """
+  {skills}
+  """
+
+# ── 3. Questions ────────────────────────────────────────────────────────────
+# Each question id becomes an answer id in `tegerun classify` output.
+# type: noul = yes/no probability P; choice = pick from criteria mapping;
+#       score = pick a level from criteria list (level 0 = first item).
+# needs_skills: true — the question also receives {skills} in its state.
+# Set `enabled: false` to skip a question (each enabled question slows the run).
+questions:
+
+  is_vacancy:
+    type: noul
+    instructions: >-
+      Is this message a job vacancy — i.e. an employer or recruiter looking
+      to hire an employee or contractor for a specific position or project?
+    needs_skills: false
+
+  category:
+    type: choice
+    instructions: What category does this message belong to?
+    criteria:
+      vacancy: >-
+        Vacancy: company or recruiter hiring an employee/contractor/executive
+        (position, tasks, requirements or conditions described).
+      resume: >-
+        Resume or self-promotion by someone seeking work or contracts.
+      ad: >-
+        Advertisement for products, services, courses, channels, partners
+        (including disguised as an "earning opportunity").
+      flood: >-
+        Flood / off-topic: chat, memes, questions unrelated to hiring,
+        reactions, greetings, news.
+      other: >-
+        Other: rentals, sales, events, chat rules, etc.
+    needs_skills: false
+
+  match:
+    type: score
+    instructions: >-
+      How well does this vacancy fit the candidate by role, level, and work
+      conditions?
+    criteria:
+      - >-
+        Poor fit: execution-role job (Android/backend/Go developer, QA,
+        analyst, DevOps, iOS developer not a blocker), sales, support,
+        marketing, junior/intern; or clear blockers (full-time office,
+        relocation outside preferred regions, mandatory third language,
+        cannot hire citizens of your country, Director/VP/CTO-level in a
+        large/mature company).
+      - >-
+        Weak match: adjacent field (product, analytics, technical writing...)
+      - >-
+        Moderate match: relevant role but not the target level or conditions.
+      - >-
+        Good match: target role at the right level with acceptable conditions.
+      - >-
+        Excellent match: target role, right level, remote-first, good pay.
+    needs_skills: true
+
+  match_ok:
+    type: noul
+    instructions: >-
+      Does this vacancy clearly meet the candidate's minimum bar (role,
+      level, remote format, pay range)?
+    needs_skills: true

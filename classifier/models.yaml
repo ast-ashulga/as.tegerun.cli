@@ -1,0 +1,45 @@
+# Реестр моделей для `tege classify`. Имя — то, что передаётся в `tege classify --model ...`.
+#
+#   runner    воркер из workers/ (d1_worker | pplx_worker)
+#   venv      окружение, где крутится воркер (создаётся ./setup.sh)
+#   repo      репозиторий на Hugging Face
+#   revision  зафиксированный коммит. Модели грузят код из репозитория
+#             (trust_remote_code / source/), поэтому запускается именно та
+#             ревизия, которую можно просмотреть через ./fetch.py --code-only <имя>.
+#   grouping  joint  — все вопросы одной группы идут в одном запросе (один проход);
+#             single — каждый вопрос отдельным запросом.
+#             Карточка pplx-decider-flash советует single; d1 заточен под joint.
+#             Можно переопределить: tege classify --grouping single
+#   device    auto | cuda | mps | cpu
+#   dtype     auto | bf16 | fp16 | fp32
+#             d1: auto = bf16 на mps/cuda, fp32 на cpu (как в model card).
+#             pplx: auto = fp32 на mps/cpu (как в оригинальном коде, ~18 ГБ);
+#                   bf16 вдвое экономнее, но это отклонение от оригинала.
+models:
+
+  d1-2B:
+    runner: d1_worker
+    venv: .venv-liquid
+    repo: LiquidAI/d1-2B
+    revision: 652f920e544ea37f81e4b0ce89b81d4ed0da90b1
+    grouping: joint
+    device: auto
+    dtype: auto
+
+  d1-3B:
+    runner: d1_worker
+    venv: .venv-liquid
+    repo: LiquidAI/d1-3B
+    revision: 051bcc464b01b9f92942b364d9586b0ef5912432   # код просмотрен
+    grouping: joint
+    device: auto
+    dtype: auto
+
+  pplx-flash:
+    runner: pplx_worker
+    venv: .venv-pplx
+    repo: perplexity-ai/pplx-decider-flash-v1.2
+    revision: 9ff7cf9838e59df461c276b7699d56b244d2af58
+    grouping: single
+    device: auto
+    dtype: auto
