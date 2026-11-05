@@ -400,6 +400,9 @@ class Verdict:
     item: Item
     answers: dict[str, dict[str, Any]] = field(default_factory=dict)
     error: str | None = None
+    # The worker never got to this message (it crashed or timed out earlier in the batch), so the
+    # failure says nothing about the message itself and must not count against it.
+    transient: bool = False
 
 
 def collect_verdicts(
@@ -430,6 +433,7 @@ def collect_verdicts(
         v = verdicts[item_id]
         if rid not in answered and v.error is None:
             v.error = "no result from the model"
+            v.transient = True
     # keep the questions.yaml order in answers
     order = list(qset.questions)
     for v in verdicts.values():

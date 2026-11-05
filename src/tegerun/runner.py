@@ -134,11 +134,14 @@ async def run_pass(
     failed = [v for v in verdicts if v.error]
     for v in failed:
         report.errors.append(f"classify {_key(v.item)}: {v.error}")
-    # Everything failing at once looks like a broken model, not broken messages: blame nobody then.
-    # A lone message that fails cannot be told apart, so it is blamed (otherwise it would block forever).
+    # Only errors the worker reported for a message count against it. "No result" (the worker died
+    # before reaching it) is transient. Everything failing at once looks like a broken model, not broken
+    # messages: blame nobody then. A lone message that fails cannot be told apart, so it is blamed
+    # (otherwise it would block forever).
     if run.send and (len(failed) < len(verdicts) or len(verdicts) == 1):
         for v in failed:
-            state.record_failure(_key(v.item))
+            if not v.transient:
+                state.record_failure(_key(v.item))
 
     matches = [v for v in verdicts if passes_thresholds(v, run.thresholds)]
     report.matched = len(matches)

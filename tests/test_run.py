@@ -622,3 +622,18 @@ def test_cli_run_sends_escaped_html_through_one_sender_and_closes_it(cli_env, mo
     assert cli.main(["run", "--once"]) == 0
     assert log.parse_mode == "html" and log.closed == 1
     assert log.sent[0] == "&lt;b&gt;x&lt;/b&gt; &amp; &lt;a href='http://evil'&gt;click&lt;/a&gt;"
+
+
+async def test_messages_the_worker_never_reached_are_not_blamed(tmp_path):
+    h = Harness(tmp_path, _msgs(1, 2, 3))
+
+    def killed_worker(items):  # message 1 classified, then the worker died: 2 and 3 got no result
+        h.classified.extend(i.msg_id for i in items)
+        done = classify.Verdict(items[0], _answers())
+        lost = [classify.Verdict(i, {}, "no result from the model", transient=True) for i in items[1:]]
+        return [done] + lost
+
+    h.classify_items = killed_worker
+    for _ in range(3):
+        await h.run(_run_settings(max_attempts=1))
+    assert h.state.failures("c1:2") == 0 and h.state.failures("c1:3") == 0  # never skipped for the worker's death

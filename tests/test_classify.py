@@ -427,3 +427,14 @@ def test_worker_failure_is_a_runtime_error_not_a_usage_error(stand, settings, tm
     f.write_text(json.dumps({"src_id": "1", "msg_id": 7, "msg": "job!", "src_name": "C"}) + "\n")
     assert cli.main(["classify", "--input", str(f)]) == 1  # not 2: nothing is wrong with the invocation
     assert "exit code 9" in capsys.readouterr().err
+
+
+def test_a_request_the_worker_never_answered_is_marked_transient(stand):
+    qset = _qset(stand)
+    items = [classify.Item(id="1:1", text="a", chat_id="1", chat="C", msg_id=1)]
+    _, rid_map = classify.build_requests(items, qset, "joint")
+    [v] = classify.collect_verdicts(items, qset, rid_map, {"results": []})
+    assert v.error == "no result from the model" and v.transient is True
+    err_rid = next(iter(rid_map))
+    [v2] = classify.collect_verdicts(items, qset, rid_map, {"results": [{"rid": err_rid, "error": "ValueError: bad"}]})
+    assert v2.transient is False  # an error the worker reported for this message is the message's
