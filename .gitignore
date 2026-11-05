@@ -225,3 +225,7 @@ __marimo__/
 .state/
 logs/
 *.session
+
+# Keep the lock file: a fresh clone then installs the same dependency versions that were tested
+# (a global gitignore that lists uv.lock would otherwise hide it).
+!uv.lock

@@ -22,6 +22,14 @@ import time
 from pathlib import Path
 
 
+def _quiet_libraries() -> None:
+    """Drop torch's note about output redirects (macOS): it reads like a warning but is not one.
+    Real warnings from the libraries stay."""
+    import logging
+
+    logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--config", required=True, help="JSON: repo, revision, device, dtype, online")
@@ -33,10 +41,14 @@ def main() -> None:
     if not cfg.get("online"):
         os.environ["HF_HUB_OFFLINE"] = "1"
 
+    _quiet_libraries()  # before the imports below
     try:
         import torch
         import transformers
         from huggingface_hub import snapshot_download
+        from transformers.utils import logging as hf_logging
+
+        hf_logging.disable_progress_bar()  # the "Loading weights" bar
     except ImportError as e:
         sys.exit(f"No module {e.name!r}: run ./setup.sh (interpreter: {sys.executable})")
 

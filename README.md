@@ -75,12 +75,12 @@ classify:
 
 notify:
   enabled: false              # sending is off until you set true
-  chat_id: "-1001234567890"   # where matches are forwarded
-  topic_id: 123               # optional forum topic
+  chat_id: "-1001234567890"   # where matches are forwarded: numeric id, @username, or "me" (your Saved Messages)
+  # topic_id: 123             # only for a forum chat with topics; leave it out otherwise
 
 run:
   every: 30m                  # pause between passes with --loop
-  first_window: 24h           # how far back the first pass reads
+  first_window: 24h           # how far back the first pass reads (a busy channel means many messages: start smaller)
   send: false                 # set true (and notify.enabled) to really send
   max_per_run: 10
   thresholds:                 # a message must pass ALL of these
@@ -92,14 +92,14 @@ run:
 To change *what* counts as a match (the built-in questions are tuned for job vacancies), see [Make it yours](#make-it-yours).
 
 ### 6) Check it step by step (optional)
-Each step is safe: nothing is sent and no state is saved until you enable sending.
+Each step is safe: nothing is sent and no state is saved until you enable sending. `tege run` prints which chats and which time window it reads; if that is not what you expect, check that you saved `.config.yaml`.
 ```bash
 uv run tege read --limit 5                  # 1. can we read your chats?
 uv run tege classify --limit 5              # 2. do the models score them?
 uv run tege run                             # 3. full pass, shows what would be forwarded
 uv run tege notify "Test" --dry-run         # 4. check the notify target
 ```
-When the output looks right, set `notify.enabled: true` and `run.send: true` in `.config.yaml`, then:
+When the output looks right, point `notify.chat_id` at where matches should go (`"me"` is your own Saved Messages, a safe place for a first try), set `notify.enabled: true` and `run.send: true` in `.config.yaml`, then:
 ```bash
 uv run tege run          # one real pass (use it from cron/launchd)
 uv run tege run --loop   # or keep running every run.every
@@ -214,7 +214,7 @@ uv run tege run --every 1h --no-send                   # repeat every hour (--ev
 uv run tege doctor                                     # what is missing for `tege run`, and how to fix it
 ```
 
-A preview (`send: false` / `--no-send`) never touches `.state/`, so looking at matches does not consume them.
+A preview (`send: false` / `--no-send`) never touches `.state/`, so looking at matches does not consume them (and a repeated preview classifies the same messages again).
 Only one `tege run` can be active at a time (`.state/run.lock`).
 
 ## Configuration Files
@@ -259,3 +259,5 @@ tegerun/
 - Uses `uv` for environment/dependency management
 - Model workers require setup via `classifier/setup.sh` (see classifier docs)
 - Session must exist before `read/classify/run/notify` (run `tege setup` first)
+- The first pass reads `run.first_window` of history; on a busy channel that is hundreds of messages and a few minutes of model time (each message takes about two model requests). Later passes read only what is new.
+- Duplicates are recognised by message (`chat_id:msg_id`), not by content: the same vacancy posted in two of your channels is forwarded twice.

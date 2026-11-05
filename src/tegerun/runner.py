@@ -211,7 +211,8 @@ def explain(report: PassReport, run: config.RunSettings) -> list[str]:
     if report.classified and not report.matched:
         best = ", ".join(f"{q} {_num(v)} (needs {_num(run.thresholds[q])})" for q, v in report.best.items())
         hints.append(
-            f"Nothing passed all thresholds. Best scores seen: {best}. Too strict? Lower run.thresholds in "
+            f"Nothing passed all thresholds. Highest value per question: {best} (not necessarily from one "
+            "message). Too strict? Lower run.thresholds in "
             ".config.yaml. Nothing relevant at all? Check the questions and `skills:` in classifier/questions.yaml."
         )
     if report.matched and not run.send:

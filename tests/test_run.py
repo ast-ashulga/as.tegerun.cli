@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -466,6 +467,56 @@ def test_cli_every_implies_the_loop_and_overrides_the_interval(cli_env):
 def test_cli_once_and_loop_exclude_each_other(cli_env):
     with pytest.raises(SystemExit):
         cli.main(["run", "--once", "--loop"])
+
+
+def test_cli_pass_summary_comes_before_the_hints(cli_env, capsys):
+    cli_env.report = runner.PassReport(ok=True)  # nothing read: explain() has something to say
+    cli.main(["run"])
+    err = capsys.readouterr().err
+    assert 0 <= err.index("Pass: read 0") < err.index("hint:")
+
+
+def test_cli_loop_explains_only_the_first_pass(cli_env, monkeypatch, capsys):
+    cli_env.report = runner.PassReport(ok=True)
+    monkeypatch.setattr(runner, "run_loop", lambda pass_fn, every, **k: (pass_fn(), pass_fn(), pass_fn()))
+    cli.main(["run", "--loop"])
+    err = capsys.readouterr().err
+    assert err.count("Pass: read 0") == 3 and err.count("hint:") == 1
+
+
+def test_cli_says_where_matches_go_only_when_sending(cli_env, monkeypatch, capsys):
+    cli.main(["run"])
+    assert "preview only" in capsys.readouterr().err
+    cli.main(["run", "--send"])
+    assert f"sending matches to {CHAT}" in capsys.readouterr().err
+
+
+def test_cli_run_says_which_window_it_reads_and_how_many_model_requests_it_makes(cli_env, monkeypatch, capsys):
+    async def reads(*a, **k):
+        return []
+
+    async def pass_that_reads_and_classifies(run, state, *, fetch, classify_items, send, **k):
+        await fetch("2026-11-05T12:28:14.803788+00:00")
+        classify_items([object(), object()])
+        return runner.PassReport(ok=True)
+
+    monkeypatch.setattr(reader, "fetch_recent", reads)
+    monkeypatch.setattr(classify, "build_requests", lambda items, qset, grouping: ([1, 2, 3, 4], {}))
+    monkeypatch.setattr(classify, "classify", lambda *a, **k: ([], None))
+    monkeypatch.setattr(runner, "run_pass", pass_that_reads_and_classifies)
+    cli.main(["run"])
+    err = capsys.readouterr().err
+    assert "Reading 1 chat(s), messages since 2026-11-05 12:28 UTC" in err
+    assert "Classifying 2 messages" in err and "4 model requests" in err
+
+
+def test_shipped_files_do_not_send_new_users_to_a_missing_file_or_a_stale_mode():
+    root = Path(__file__).resolve().parent.parent
+    setup_sh = (root / "classifier" / "setup.sh").read_text()
+    assert "messages.jsonl" not in setup_sh and "tege run" in setup_sh
+    cfg = (root / ".config.yaml").read_text()
+    assert "--once" not in cfg  # `run` is one pass by default; the comment must not say the opposite
+    assert not any(line.startswith("  topic_id:") for line in cfg.splitlines())  # an example topic breaks a chat without topics
 
 
 def test_cli_run_stops_with_the_to_do_list_when_setup_is_unfinished(cli_env, monkeypatch, capsys):

@@ -17,14 +17,15 @@ classify:
 
 # `tegerun notify` / notifier.send_notification(): where to send messages.
 # Sent from the logged-in Telegram account via fast-mcp-telegram. Nothing is sent unless enabled: true.
+# chat_id: numeric id or @username; "me" is your own Saved Messages (a good place to try it out).
 notify:
   enabled: false
   chat_id: "-1001234567890"
-  topic_id: 123
+  # topic_id: 123   # only for a forum chat with topics (the number in t.me/c/<chat>/<topic>)
   # reply_to: 456
 
-# `tegerun run`: read -> classify -> keep matches above thresholds -> send.
-# `tegerun run --once` is a single pass (cron/launchd); plain `tegerun run` repeats every run.every.
+# `tege run`: read -> classify -> keep matches above thresholds -> send.
+# One pass by default (also what cron/launchd want); `tege run --loop` repeats it every run.every.
 run:
   every: 30m
   first_window: 24h

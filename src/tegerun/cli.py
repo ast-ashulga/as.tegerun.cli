@@ -9,6 +9,7 @@ import html
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -241,6 +242,17 @@ def cmd_notify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _utc_minute(iso: str) -> str:
+    """'2026-11-05T12:28:14.8+00:00' -> '2026-11-05 12:28 UTC' for the one-line header of a pass."""
+    try:
+        moment = datetime.fromisoformat(iso)
+    except ValueError:
+        return iso
+    if moment.tzinfo:
+        moment = moment.astimezone(timezone.utc)
+    return moment.strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _preflight(args: argparse.Namespace) -> int | None:
     """Print what is still missing. Returns exit code 2 if `run` cannot work yet, else None."""
     findings = preflight.check(model_name=args.model, send=args.send, online=args.online)
@@ -273,16 +285,24 @@ def cmd_run(args: argparse.Namespace) -> int:
     chats = {c.id: c for c in config.load_whitelist()}
 
     async def fetch(since: str) -> tuple[list[reader.ChatResult], dict[str, config.Chat]]:
+        print(f"Reading {len(chats)} chat(s), messages since {_utc_minute(since)}.", file=sys.stderr)
         results = await reader.fetch_recent(
             list(chats), run.limit, since, verbose=args.verbose, allowed=chats, paginate=True
         )
         return results, chats
 
     def classify_items(items: list[classify.Item]) -> list[classify.Verdict]:
-        print(f"Classifying {len(items)} messages with {name} ({model.grouping}) ...", file=sys.stderr)
+        n_requests = len(classify.build_requests(items, qset, model.grouping)[0])
+        print(f"Classifying {len(items)} messages with {name} ({n_requests} model requests, {model.grouping}) ...",
+              file=sys.stderr)
         return classify.classify(items, qset, model, model.grouping, settings, online=args.online)[0]
 
+    passes = 0
+
     def one_pass(state: runstate.RunState) -> runner.PassReport:
+        nonlocal passes
+        passes += 1
+
         async def go() -> runner.PassReport:
             # One MCP session for all of this pass's messages. The text comes from other people's
             # messages, so it goes out as escaped HTML: the server must not interpret it as markup.
@@ -301,22 +321,24 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"[send is off] would send:\n{printable(text)}\n")
         for err in report.errors:
             print(f"error: {printable(err)}", file=sys.stderr)
-        for hint in runner.explain(report, run):
-            print(f"hint: {hint}", file=sys.stderr)
         print(
             f"Pass: read {report.read}, classified {report.classified}, matched {report.matched}, "
             f"sent {report.sent}{'' if report.ok else ' (window not advanced)'}.",
             file=sys.stderr,
         )
+        if passes == 1:  # a loop repeats quiet passes; the advice is worth saying once
+            for hint in runner.explain(report, run):
+                print(f"hint: {hint}", file=sys.stderr)
         return report
 
     with runstate.RunLock():  # two runs at once would race on the state files and double-send
         state = runstate.RunState()
         if not (args.loop or args.every):  # one pass is the default; --loop (or --every) repeats it
-            how = "sending matches" if run.send else "preview only, nothing is sent"
+            how = f"sending matches to {notify.chat_id}" if run.send else "preview only, nothing is sent"
             print(f"One pass with {name}: {how}.", file=sys.stderr)
             return 0 if one_pass(state).ok else 1
-        print(f"Running every {run.every}; send is {'ON' if run.send else 'off'}. Ctrl+C to stop.", file=sys.stderr)
+        target = f" to {notify.chat_id}" if run.send else ""
+        print(f"Running every {run.every}; send is {'ON' + target if run.send else 'off'}. Ctrl+C to stop.", file=sys.stderr)
         runner.run_loop(lambda: one_pass(state), run.every)
     return 0
 

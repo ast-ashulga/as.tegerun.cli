@@ -63,6 +63,7 @@ if [[ -n "$MODE" ]]; then
   fi
 fi
 
-log "Done. Next: uv run tege classify --dry-run --input messages.jsonl"
+log "Done. Next: uv run tege doctor   # what is still missing; then: uv run tege run"
 echo "Reminder: models run code from their repositories (trust_remote_code / source/)."
-echo "Revisions are pinned in models.yaml; read code: ./setup.sh --code-only <name>."
+echo "Revisions are pinned in models.yaml; to read the code before downloading weights, from the project root:"
+echo "  ./classifier/setup.sh --code-only <name>"
