@@ -311,7 +311,7 @@ async def test_pass_with_send_off_sends_and_records_nothing_but_reports_what_wou
     assert h.sent == [] and not h.state.is_sent("c1:1")
     assert len(report.would_send) == 2 and "vacancy 1" in report.would_send[0]
     assert report.sent == 0 and report.ok is True
-    assert h.state.last_success == NOW  # the window still moves on
+    assert h.state.last_success is None  # a preview must not consume the matches it shows
 
 
 async def test_already_sent_messages_are_neither_classified_nor_sent_again(tmp_path):
@@ -491,3 +491,134 @@ def test_cli_prints_what_would_be_sent_when_send_is_off(cli_env, capsys):
 def test_cli_has_no_way_to_override_the_destination_for_run():
     args = cli.build_parser().parse_args(["run", "--once"])
     assert not hasattr(args, "chat_id") and "--chat-id" not in cli.build_parser().format_help()
+
+
+# --- hardening: overflow, poison messages, send failures, state -----------------
+
+
+async def test_unread_overflow_holds_the_window_instead_of_losing_messages(tmp_path):
+    h = Harness(tmp_path, _msgs(1))
+
+    async def overflowing_fetch(since):
+        return [reader.ChatResult("c1", messages=_msgs(1), has_more=True)], h.chats
+
+    h.fetch = overflowing_fetch
+    report = await h.run()
+    assert report.ok is False and h.state.last_success is None
+    assert any("more messages than could be read" in e for e in report.errors)
+
+
+async def test_a_message_that_keeps_failing_is_skipped_after_max_attempts(tmp_path):
+    h = Harness(tmp_path, _msgs(1, 2), {1: "error"})
+    settings = _run_settings(max_attempts=2)
+    for _ in range(2):
+        assert (await h.run(settings)).ok is False
+    assert h.state.failures("c1:1") == 2
+    h.classified.clear()
+    final = await h.run(settings)
+    assert 1 not in h.classified  # not re-run through the model any more
+    assert final.ok is True and h.state.last_success == NOW  # and it no longer blocks the window
+
+
+async def test_when_every_message_fails_at_once_nobody_is_blamed(tmp_path):
+    h = Harness(tmp_path, _msgs(1, 2), {1: "error", 2: "error"})  # looks like a broken model, not bad messages
+    await h.run()
+    assert h.state.failures("c1:1") == 0 and h.state.failures("c1:2") == 0
+
+
+async def test_failures_are_not_counted_in_a_preview(tmp_path):
+    h = Harness(tmp_path, _msgs(1, 2), {1: "error"})
+    await h.run(_run_settings(send=False))
+    assert h.state.failures("c1:1") == 0
+
+
+async def test_a_message_telegram_rejects_does_not_block_the_ones_after_it(tmp_path):
+    h = Harness(tmp_path, _msgs(1, 2, 3))
+    real_send = h.send
+
+    async def picky(text):
+        if "vacancy 2" in text:
+            return notifier.NotifyResult(sent=False, error="MESSAGE_INVALID")
+        return await real_send(text)
+
+    h.send = picky
+    report = await h.run()
+    assert len(h.sent) == 2 and h.state.is_sent("c1:3")  # 3 went out although 2 failed
+    assert h.state.failures("c1:2") == 1  # others got through, so the blame goes to message 2
+    assert report.ok is False
+
+
+async def test_two_failed_sends_in_a_row_stop_the_pass_without_blaming_the_messages(tmp_path):
+    h = Harness(tmp_path, _msgs(1, 2, 3, 4), fail_send_at=0)  # Telegram unreachable
+    report = await h.run()
+    assert h.sent == [] and len([e for e in report.errors if e.startswith("send")]) == 2
+    assert all(h.state.failures(f"c1:{i}") == 0 for i in (1, 2, 3, 4))
+
+
+def test_validate_thresholds_rejects_values_that_can_never_be_reached():
+    qset = classify.QuestionSet("s", "{message}", "{message}", {
+        "p": {"type": "noul"},
+        "lvl": {"type": "score", "criteria": ["a", "b", "c"]},
+    })
+    runner.validate_thresholds({"p": 1, "lvl": 2}, qset)  # the maxima themselves are fine
+    with pytest.raises(config.ConfigError, match="0..1"):
+        runner.validate_thresholds({"p": 5}, qset)
+    with pytest.raises(config.ConfigError, match="0..2"):
+        runner.validate_thresholds({"lvl": 3}, qset)
+
+
+def test_state_counts_failures_across_instances_and_refuses_a_corrupt_file(tmp_path):
+    st = runstate.RunState(tmp_path)
+    assert st.failures("1:2") == 0 and st.record_failure("1:2") == 1 and st.record_failure("1:2") == 2
+    assert runstate.RunState(tmp_path).failures("1:2") == 2
+    (tmp_path / "failed.json").write_text('{"failures": {"1:2": "x"}}')
+    with pytest.raises(config.ConfigError):
+        runstate.RunState(tmp_path)
+
+
+def test_run_lock_is_exclusive_and_released_afterwards(tmp_path):
+    with runstate.RunLock(tmp_path):
+        with pytest.raises(config.ConfigError, match="already active"):
+            with runstate.RunLock(tmp_path):
+                pass
+    with runstate.RunLock(tmp_path):  # free again
+        pass
+
+
+@pytest.mark.parametrize("body", ["run:\n  max_attempts: 0\n", "run:\n  max_attempts: true\n", "classify:\n  timeout: 0\n"])
+def test_new_settings_are_validated(tmp_path, body):
+    cfg = _cfg(tmp_path, body)
+    with pytest.raises(config.ConfigError):
+        config.load_run_settings(cfg) if body.startswith("run") else config.load_classify_settings(cfg)
+
+
+def test_cli_run_refuses_to_start_while_another_run_holds_the_lock(cli_env, capsys):
+    with runstate.RunLock():
+        assert cli.main(["run", "--once"]) == 2
+    assert "already active" in capsys.readouterr().err and cli_env.passes == 0
+
+
+def test_cli_run_sends_escaped_html_through_one_sender_and_closes_it(cli_env, monkeypatch):
+    log = SimpleNamespace(parse_mode=None, sent=[], closed=0)
+
+    class FakeSender:
+        def __init__(self, settings, *, verbose=False, parse_mode=None):
+            log.parse_mode = parse_mode
+
+        async def send(self, text, reply_to=None):
+            log.sent.append(text)
+            return notifier.NotifyResult(sent=True, message_ids=[1])
+
+        async def aclose(self):
+            log.closed += 1
+
+    async def pass_that_sends(run, state, *, fetch, classify_items, send, **k):
+        await send("<b>x</b> & <a href='http://evil'>click</a>")
+        await send("second")
+        return runner.PassReport(ok=True)
+
+    monkeypatch.setattr(notifier, "Sender", FakeSender)
+    monkeypatch.setattr(runner, "run_pass", pass_that_sends)
+    assert cli.main(["run", "--once"]) == 0
+    assert log.parse_mode == "html" and log.closed == 1
+    assert log.sent[0] == "&lt;b&gt;x&lt;/b&gt; &amp; &lt;a href='http://evil'&gt;click&lt;/a&gt;"

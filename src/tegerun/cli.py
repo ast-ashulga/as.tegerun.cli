@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
+import html
 import json
 import os
 import sys
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from tegerun import classify, config, notifier, reader, runner, runstate
+from tegerun.textutil import printable
 
 
 def _sender(msg: dict[str, Any]) -> str:
@@ -101,13 +103,15 @@ def _fetch(args: argparse.Namespace) -> tuple[list[reader.ChatResult], dict[str,
         )
     since = reader.parse_since(args.since) if args.since else None
     until = reader.parse_since(args.until, flag="--until") if args.until else None
-    results = asyncio.run(reader.fetch_recent(peers, args.limit, since, verbose=args.verbose, until=until))
+    results = asyncio.run(
+        reader.fetch_recent(peers, args.limit, since, verbose=args.verbose, until=until, allowed=chats)
+    )
     return results, chats
 
 
 def cmd_read(args: argparse.Namespace) -> int:
     results, chats = _fetch(args)
-    print(render_json(results, chats) if args.json else render_text(results, chats))
+    print(render_json(results, chats) if args.json else printable(render_text(results, chats)))
     return 1 if all(r.error for r in results) else 0
 
 
@@ -163,14 +167,21 @@ def render_classify_json(
     )
 
 
-def cmd_classify(args: argparse.Namespace) -> int:
+def _load_classifier(
+    model_name: str | None,
+) -> tuple[config.ClassifySettings, classify.QuestionSet, str, classify.ModelSpec]:
+    """Settings, questions and the chosen model (--model or classify.model), validated."""
     settings = config.load_classify_settings()
     qset = classify.load_questions(settings.questions_file)
     models = classify.load_models(settings.models_file)
-    name = args.model or settings.model
+    name = model_name or settings.model
     if name not in models:
         raise config.ConfigError(f"Unknown model {name!r}; available: {', '.join(models)}.")
-    model = models[name]
+    return settings, qset, name, models[name]
+
+
+def cmd_classify(args: argparse.Namespace) -> int:
+    settings, qset, name, model = _load_classifier(args.model)
     grouping = args.grouping or model.grouping
 
     fetch_failed = False
@@ -203,7 +214,7 @@ def cmd_classify(args: argparse.Namespace) -> int:
     print(
         render_classify_json(verdicts, skipped, name, grouping, meta)
         if args.json
-        else render_classify_text(verdicts, skipped, name)
+        else printable(render_classify_text(verdicts, skipped, name))
     )
     return 1 if all(v.error for v in verdicts) else 0
 
@@ -222,7 +233,7 @@ def cmd_notify(args: argparse.Namespace) -> int:
     if not settings.enabled:
         print("error: notifications are disabled (set notify.enabled: true in .config.yaml).", file=sys.stderr)
         return 1
-    result = asyncio.run(notifier.send_notification(text, settings=settings, reply_to=args.reply_to, verbose=args.verbose))
+    result = asyncio.run(notifier.send_notification(text, settings=settings, reply_to=reply_to, verbose=args.verbose))
     if not result.sent:
         print(f"error: not sent: {result.error}", file=sys.stderr)
         return 1
@@ -240,37 +251,39 @@ def cmd_run(args: argparse.Namespace) -> int:
     if run.send and not notify.enabled:
         raise config.ConfigError("sending is on but notify.enabled is false in .config.yaml; enable it or use --no-send.")
 
-    settings = config.load_classify_settings()
-    qset = classify.load_questions(settings.questions_file)
-    models = classify.load_models(settings.models_file)
-    name = args.model or settings.model
-    if name not in models:
-        raise config.ConfigError(f"Unknown model {name!r}; available: {', '.join(models)}.")
-    model = models[name]
+    settings, qset, name, model = _load_classifier(args.model)
     runner.validate_thresholds(run.thresholds, qset)
-
     chats = {c.id: c for c in config.load_whitelist()}
-    state = runstate.RunState()
 
     async def fetch(since: str) -> tuple[list[reader.ChatResult], dict[str, config.Chat]]:
-        results = await reader.fetch_recent(list(chats), run.limit, since, verbose=args.verbose)
+        results = await reader.fetch_recent(
+            list(chats), run.limit, since, verbose=args.verbose, allowed=chats, paginate=True
+        )
         return results, chats
 
     def classify_items(items: list[classify.Item]) -> list[classify.Verdict]:
         print(f"Classifying {len(items)} messages with {name} ({model.grouping}) ...", file=sys.stderr)
         return classify.classify(items, qset, model, model.grouping, settings, online=args.online)[0]
 
-    async def send(text: str) -> notifier.NotifyResult:
-        return await notifier.send_notification(text, settings=notify, verbose=args.verbose)
+    def one_pass(state: runstate.RunState) -> runner.PassReport:
+        async def go() -> runner.PassReport:
+            # One MCP session for all of this pass's messages. The text comes from other people's
+            # messages, so it goes out as escaped HTML: the server must not interpret it as markup.
+            sender = notifier.Sender(notify, verbose=args.verbose, parse_mode="html")
 
-    def one_pass() -> runner.PassReport:
-        report = asyncio.run(
-            runner.run_pass(run, state, fetch=fetch, classify_items=classify_items, send=send)
-        )
+            async def send(text: str) -> notifier.NotifyResult:
+                return await sender.send(html.escape(text, quote=False))
+
+            try:
+                return await runner.run_pass(run, state, fetch=fetch, classify_items=classify_items, send=send)
+            finally:
+                await sender.aclose()
+
+        report = asyncio.run(go())
         for text in report.would_send:
-            print(f"[send is off] would send:\n{text}\n")
+            print(f"[send is off] would send:\n{printable(text)}\n")
         for err in report.errors:
-            print(f"error: {err}", file=sys.stderr)
+            print(f"error: {printable(err)}", file=sys.stderr)
         print(
             f"Pass: read {report.read}, classified {report.classified}, matched {report.matched}, "
             f"sent {report.sent}{'' if report.ok else ' (window not advanced)'}.",
@@ -278,10 +291,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
         return report
 
-    if args.once:
-        return 0 if one_pass().ok else 1
-    print(f"Running every {run.every}; send is {'ON' if run.send else 'off'}. Ctrl+C to stop.", file=sys.stderr)
-    runner.run_loop(one_pass, run.every)
+    with runstate.RunLock():  # two runs at once would race on the state files and double-send
+        state = runstate.RunState()
+        if args.once:
+            return 0 if one_pass(state).ok else 1
+        print(f"Running every {run.every}; send is {'ON' if run.send else 'off'}. Ctrl+C to stop.", file=sys.stderr)
+        runner.run_loop(lambda: one_pass(state), run.every)
     return 0
 
 
@@ -292,9 +307,15 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("setup", help="one-time Telegram login (interactive)")
     s.set_defaults(func=cmd_setup)
 
+    def positive_int(text: str) -> int:
+        value = int(text)
+        if value < 1:
+            raise argparse.ArgumentTypeError("must be at least 1")
+        return value
+
     def add_window(sp: argparse.ArgumentParser, default_limit: int) -> None:
         sp.add_argument("--chat", action="append", help="chat id to read (repeatable); default: whole whitelist")
-        sp.add_argument("--limit", type=int, default=default_limit, help=f"messages per chat (default {default_limit})")
+        sp.add_argument("--limit", type=positive_int, default=default_limit, help=f"messages per chat (default {default_limit})")
         sp.add_argument("--since", help="only newer than e.g. 24h, 7d, 2w or an ISO date")
         sp.add_argument("--until", help="only older than e.g. 1h, 1d or an ISO date")
         sp.add_argument("--json", action="store_true", default=False, help="machine-readable output")
@@ -350,6 +371,9 @@ def main(argv: list[str] | None = None) -> int:
     except (config.ConfigError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except classify.WorkerError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

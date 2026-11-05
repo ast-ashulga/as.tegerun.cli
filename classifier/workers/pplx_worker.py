@@ -7,7 +7,7 @@ requests.json / out.json format — same as d1_worker.py.
 Notes:
  • Model code lives in the repository (source/src/pplx_decider) and is connected via sys.path — no pip install.
  • Original code is designed for CUDA. On Mac the reference path (fast=False) on mps/cpu in fp32 is taken
-   (~18 GB). --dtype bf16 brings backbone and readout to bf16: faster and half as much memory, but this
+   (~18 GB). dtype: bf16 in models.yaml brings backbone and readout to bf16: faster and half as much memory, but this
    deviation from original (check quality).
  • Probabilities are calibrated with temperature from decision_config.json (applied inside decide()).
 """
@@ -84,9 +84,23 @@ def main() -> None:
 
     requests = json.loads(args.requests.read_text(encoding="utf-8"))
     results = []
-    if requests:
-        decider.decide({"state": requests[0]["state"], "questions": requests[0]["questions"]})
-        sync()
+    meta = {"repo": repo, "revision": revision, "device": device, "dtype": actual_dtype,
+            "load_s": load_s, "temperature": decider.temperature,
+            "transformers": transformers.__version__, "torch": torch.__version__}
+
+    def save() -> None:
+        """Atomic, so the caller can use the partial file if this process is killed (OOM, timeout)."""
+        tmp = args.out.with_name(args.out.name + ".tmp")
+        tmp.write_text(json.dumps({"meta": meta, "results": results}, ensure_ascii=False, default=float),
+                       encoding="utf-8")
+        os.replace(tmp, args.out)
+
+    if requests:  # warm-up
+        try:
+            decider.decide({"state": requests[0]["state"], "questions": requests[0]["questions"]})
+            sync()
+        except Exception as e:  # noqa: BLE001 - the real call below reports this request's error
+            print(f"[pplx] warm-up failed: {type(e).__name__}: {e}", flush=True)
 
     for i, req in enumerate(requests, 1):
         try:
@@ -101,12 +115,8 @@ def main() -> None:
             results.append({"rid": req["rid"], "error": f"{type(e).__name__}: {e}"})
         if i % 10 == 0 or i == len(requests):
             print(f"[pplx] {i}/{len(requests)}", flush=True)
-
-    meta = {"repo": repo, "revision": revision, "device": device, "dtype": actual_dtype,
-            "load_s": load_s, "temperature": decider.temperature,
-            "transformers": transformers.__version__, "torch": torch.__version__}
-    args.out.write_text(json.dumps({"meta": meta, "results": results}, ensure_ascii=False, default=float),
-                        encoding="utf-8")
+            save()
+    save()  # also covers an empty request list
 
 
 if __name__ == "__main__":

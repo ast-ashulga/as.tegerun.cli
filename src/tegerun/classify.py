@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -29,6 +30,11 @@ from tegerun.config import ConfigError
 
 QTYPES = ("noul", "choice", "score")
 GROUPINGS = ("joint", "single")
+_COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+class WorkerError(RuntimeError):
+    """The model worker crashed, timed out or produced nothing (a runtime failure, not a bad config)."""
 
 
 def _one_line(value: Any) -> str:
@@ -60,11 +66,17 @@ def load_questions(path: Path) -> QuestionSet:
     cfg = _read_yaml(path, "Questions file") or {}
     if not isinstance(cfg, dict):
         raise ConfigError(f"{path.name}: expected a mapping.")
+    raw_questions = cfg.get("questions") or {}
+    if not isinstance(raw_questions, dict):
+        raise ConfigError(f"{path.name}: 'questions' must be a mapping of id -> question.")
     qs: dict[str, dict[str, Any]] = {}
-    for qid, q in (cfg.get("questions") or {}).items():
+    for qid, q in raw_questions.items():
         if not isinstance(q, dict):
             raise ConfigError(f"{path.name}: question {qid!r} must be a mapping")
-        if q.get("enabled", True) is False:
+        for flag in ("enabled", "needs_skills"):  # real booleans only: the string "false" is truthy
+            if flag in q and not isinstance(q[flag], bool):
+                raise ConfigError(f"{path.name}: question {qid!r}: {flag} must be true or false (got {q[flag]!r}).")
+        if not q.get("enabled", True):
             continue
         t = q.get("type")
         if t not in QTYPES:
@@ -84,7 +96,7 @@ def load_questions(path: Path) -> QuestionSet:
                 if t == "score"
                 else None
             ),
-            "needs_skills": bool(q.get("needs_skills", False)),
+            "needs_skills": q.get("needs_skills", False),
         }
     if not qs:
         raise ConfigError(f"{path.name}: no enabled questions.")
@@ -129,6 +141,12 @@ def load_models(path: Path) -> dict[str, ModelSpec]:
         missing = [k for k in ("runner", "venv", "repo") if not m.get(k)]
         if missing:
             raise ConfigError(f"{path.name}: model {name!r} is missing {', '.join(missing)}")
+        revision = str(m.get("revision") or "")
+        if not _COMMIT_SHA.fullmatch(revision):
+            raise ConfigError(
+                f"{path.name}: model {name!r}: revision must be a full 40-character commit hash "
+                "(the model repository's code runs on this machine, so it is never loaded from a moving branch)."
+            )
         grouping = str(m.get("grouping", "joint"))
         if grouping not in GROUPINGS:
             raise ConfigError(f"{path.name}: model {name!r}: grouping must be one of {list(GROUPINGS)}")
@@ -137,7 +155,7 @@ def load_models(path: Path) -> dict[str, ModelSpec]:
             runner=str(m["runner"]),
             venv=str(m["venv"]),
             repo=str(m["repo"]),
-            revision=str(m["revision"]) if m.get("revision") else None,
+            revision=revision,
             grouping=grouping,
             device=str(m.get("device", "auto")),
             dtype=str(m.get("dtype", "auto")),
@@ -234,6 +252,16 @@ def load_jsonl(path: Path) -> tuple[list[Item], int]:
 # ───────────────────────────────────────────────────────── requests for the workers
 
 
+_PLACEHOLDER = re.compile(r"\{(message|skills)\}")
+
+
+def render_state(template: str, message: str, skills: str) -> str:
+    """Fill {message} and {skills} in ONE pass, so a placeholder inside the message is not expanded
+    again. The message cannot close the templates' triple-quote delimiter either."""
+    values = {"message": message.replace('"""', "'''"), "skills": skills}
+    return _PLACEHOLDER.sub(lambda m: values[m.group(1)], template)
+
+
 def build_requests(
     items: list[Item], qset: QuestionSet, grouping: str
 ) -> tuple[list[dict[str, Any]], dict[str, tuple[str, list[str]]]]:
@@ -252,7 +280,7 @@ def build_requests(
             if not qids:
                 continue
             tpl = qset.tpl_skills if use_skills else qset.tpl
-            state = tpl.replace("{message}", it.text).replace("{skills}", qset.skills)
+            state = render_state(tpl, it.text, qset.skills)
             payload: dict[str, Any] = {}
             for qid in qids:
                 q = qs[qid]
@@ -305,12 +333,31 @@ def run_worker(
             "--requests", str(req_path),
             "--out", str(out_path),
         ]  # fmt: skip
-        rc = subprocess.run(cmd, stdout=_stderr_fd(), check=False).returncode
-        if rc != 0 or not out_path.exists():
-            raise ConfigError(
-                f"Worker for {model.name} failed (exit code {rc}); see its messages above."
-            )
-        return json.loads(out_path.read_text(encoding="utf-8"))
+        # The worker runs third-party model code: no secrets in its environment, and a scratch cwd
+        # (not the project root, which holds .env and .sessions/).
+        try:
+            rc = subprocess.run(
+                cmd, stdout=_stderr_fd(), cwd=tmp, env=config.worker_env(), timeout=settings.timeout, check=False
+            ).returncode
+            problem = None if rc == 0 else f"exit code {rc}"
+        except subprocess.TimeoutExpired:
+            problem = f"timed out after {settings.timeout} s"
+        out = _read_out(out_path)
+        if problem is None and out is None:
+            problem = "no output written"
+        if problem and out is None:
+            raise WorkerError(f"Worker for {model.name} failed ({problem}); see its messages above.")
+        if problem:  # workers save results as they go: keep what was done, the rest is reported per message
+            print(f"warning: worker for {model.name} stopped early ({problem}); using its partial results.", file=sys.stderr)
+        return out
+
+
+def _read_out(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 # ───────────────────────────────────────────────────────── answers -> verdicts

@@ -8,6 +8,7 @@ sent unless `notify.enabled` is true. The message is sent from the logged-in Tel
 
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -56,16 +57,21 @@ async def deliver(
     reply_to: int | None = None,
     limit: int = TELEGRAM_LIMIT,
     topic_id: int | None = None,
+    parse_mode: str | None = None,
 ) -> NotifyResult:
     """Send `text` (split if needed) to `chat_id` through an open MCP session. Never raises.
 
     `topic_id` (forum topic) applies to every part; `reply_to` only to the first one.
+    `parse_mode` is passed on as is; without it the server auto-detects HTML/Markdown in the text,
+    so text that comes from other people should be sent escaped with `parse_mode="html"`.
     """
     if not text.strip():
         return NotifyResult(sent=False, error="empty message")
     ids: list[int] = []
     for i, part in enumerate(split_text(text.strip(), limit)):
         args: dict[str, Any] = {"chat_id": chat_id, "message": part}
+        if parse_mode is not None:
+            args["parse_mode"] = parse_mode
         target = reply_to if i == 0 and reply_to is not None else topic_id
         if target is not None:
             args["reply_to_id"] = target
@@ -74,8 +80,6 @@ async def deliver(
         except Exception as exc:
             return NotifyResult(sent=False, message_ids=ids, error=f"{type(exc).__name__}: {exc}")
         payload = extract_payload(res)
-        if "message_id" not in payload and isinstance(payload.get("result"), dict):
-            payload = payload["result"]  # FastMCP may wrap the result object
         error = _send_error(res, payload)
         if error:
             return NotifyResult(sent=False, message_ids=ids, error=error)
@@ -88,21 +92,55 @@ async def send_notification(
     settings: config.NotifySettings | None = None,
     reply_to: int | None = None,
     verbose: bool = False,
+    parse_mode: str | None = None,
 ) -> NotifyResult:
     """Send `text` to the configured chat. `reply_to` overrides `notify.reply_to`. Never raises."""
+    sender = Sender(settings, verbose=verbose, parse_mode=parse_mode)
     try:
-        settings = settings or config.load_notify_settings()
-        if not settings.enabled:
-            return NotifyResult(sent=False, skipped=True)
-        async with mcp_client.open_session(verbose=verbose) as session:
+        return await sender.send(text, reply_to=reply_to)
+    finally:
+        await sender.aclose()
+
+
+class Sender:
+    """Delivers several messages through ONE MCP session (one server process, one Telegram login),
+    opened on the first send. Call `aclose()` from the task that sent. Like `send_notification`,
+    `send` never raises."""
+
+    def __init__(
+        self, settings: config.NotifySettings | None = None, *, verbose: bool = False, parse_mode: str | None = None
+    ) -> None:
+        self._settings = settings
+        self._verbose = verbose
+        self._parse_mode = parse_mode
+        self._stack = AsyncExitStack()
+        self._session: Any = None
+
+    async def send(self, text: str, reply_to: int | None = None) -> NotifyResult:
+        try:
+            settings = self._settings = self._settings or config.load_notify_settings()
+            if not settings.enabled:
+                return NotifyResult(sent=False, skipped=True)
+            if self._session is None:
+                self._session = await self._stack.enter_async_context(
+                    mcp_client.open_session(verbose=self._verbose, allow=mcp_client.SEND_TOOLS)
+                )
             return await deliver(
-                session,
+                self._session,
                 settings.chat_id,
                 text,
                 reply_to if reply_to is not None else settings.reply_to,
                 topic_id=settings.topic_id,
+                parse_mode=self._parse_mode,
             )
-    except config.ConfigError as exc:
-        return NotifyResult(sent=False, error=str(exc))
-    except Exception as exc:  # MCP server failed to start, connection dropped, ...
-        return NotifyResult(sent=False, error=f"{type(exc).__name__}: {exc}")
+        except config.ConfigError as exc:
+            return NotifyResult(sent=False, error=str(exc))
+        except Exception as exc:  # MCP server failed to start, connection dropped, ...
+            return NotifyResult(sent=False, error=f"{type(exc).__name__}: {exc}")
+
+    async def aclose(self) -> None:
+        self._session = None
+        try:
+            await self._stack.aclose()
+        except Exception:  # noqa: BLE001 - the message is already delivered (or has failed); closing is best effort
+            pass

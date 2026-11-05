@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -37,9 +38,9 @@ def main() -> None:
     except ImportError as e:
         sys.exit(f"No module {e.name!r}: run ./setup.sh (interpreter: {sys.executable})")
 
-    major_minor = tuple(int(x) for x in transformers.__version__.split(".")[:2])
-    if major_minor < (5, 19):
-        sys.exit(f"d1-2B needs transformers>=5.19, found {transformers.__version__}. ./setup.sh will update.")
+    parts = re.match(r"(\d+)\.(\d+)", transformers.__version__)  # tolerates "5.19.0.dev0", "5.20rc1"
+    if not parts or (int(parts[1]), int(parts[2])) < (5, 19):
+        sys.exit(f"d1 models need transformers>=5.19, found {transformers.__version__}. ./setup.sh will update.")
 
     device = cfg.get("device", "auto")
     if device == "auto":
@@ -68,10 +69,24 @@ def main() -> None:
 
     requests = json.loads(args.requests.read_text(encoding="utf-8"))
     results = []
+    meta = {"repo": repo, "revision": revision, "device": device,
+            "dtype": str(dtype).split(".")[-1], "load_s": load_s,
+            "transformers": transformers.__version__, "torch": torch.__version__}
+
+    def save() -> None:
+        """Atomic, so the caller can use the partial file if this process is killed (OOM, timeout)."""
+        tmp = args.out.with_name(args.out.name + ".tmp")
+        tmp.write_text(json.dumps({"meta": meta, "results": results}, ensure_ascii=False, default=float),
+                       encoding="utf-8")
+        os.replace(tmp, args.out)
+
     if requests:  # warm-up: first call with new shape is more expensive (kernels/compilation)
-        with torch.no_grad():
-            model.system_one(requests[0]["state"], requests[0]["questions"])
-        sync()
+        try:
+            with torch.no_grad():
+                model.system_one(requests[0]["state"], requests[0]["questions"])
+            sync()
+        except Exception as e:  # noqa: BLE001 - the real call below reports this request's error
+            print(f"[d1] warm-up failed: {type(e).__name__}: {e}", flush=True)
 
     for i, req in enumerate(requests, 1):
         try:
@@ -87,12 +102,8 @@ def main() -> None:
             results.append({"rid": req["rid"], "error": f"{type(e).__name__}: {e}"})
         if i % 10 == 0 or i == len(requests):
             print(f"[d1] {i}/{len(requests)}", flush=True)
-
-    meta = {"repo": repo, "revision": revision, "device": device,
-            "dtype": str(dtype).split(".")[-1], "load_s": load_s,
-            "transformers": transformers.__version__, "torch": torch.__version__}
-    args.out.write_text(json.dumps({"meta": meta, "results": results}, ensure_ascii=False, default=float),
-                        encoding="utf-8")
+            save()
+    save()  # also covers an empty request list
 
 
 if __name__ == "__main__":

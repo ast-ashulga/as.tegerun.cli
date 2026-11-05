@@ -6,10 +6,10 @@ All paths are relative to the project; nothing outside this repo is required.
 | File/Dir | Description |
 |---|---|
 | `questions.yaml` | Questions (`is_vacancy`, `category`, `match`, `match_ok`, …), optional candidate profile `skills:`, and state templates. Disable a question with `enabled: false`. |
-| `models.yaml` | Model registry: HF repo, pinned revision, grouping (`joint`/`single`), device, dtype. |
+| `models.yaml` | Model registry: HF repo, pinned revision (a full 40-character commit hash is required), grouping (`joint`/`single`), device, dtype. |
 | `workers/` | Model workers (one per family). Each runs in its own venv, reads `requests.json`, writes `out.json`. |
 | `setup.sh`, `fetch.py` | Create venvs and download model weights. |
-| `.venv-liquid/`, `.venv-pplx/` | Virtual environments created by `setup.sh` (gitignored in practice). |
+| `.venv-liquid/`, `.venv-pplx/` | Virtual environments created by `setup.sh` (gitignored by `.venv-*/`). |
 
 ## First-time setup
 

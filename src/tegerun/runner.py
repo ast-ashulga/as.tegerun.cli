@@ -6,6 +6,7 @@ plain logic. What is worth sending is decided here by thresholds from `run.thres
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 from collections.abc import Awaitable, Callable
@@ -39,6 +40,10 @@ def validate_thresholds(thresholds: dict[str, float], qset: classify.QuestionSet
             )
         if question["type"] not in THRESHOLD_TYPES:
             raise ConfigError(f"run.thresholds.{qid}: a {question['type']} question has no numeric value to compare.")
+        criteria = question.get("criteria")
+        top = 1 if question["type"] == "noul" else (len(criteria) - 1 if criteria else None)
+        if top is not None and not 0 <= thresholds[qid] <= top:
+            raise ConfigError(f"run.thresholds.{qid}: {thresholds[qid]} can never be reached; use a value in 0..{top}.")
 
 
 def passes_thresholds(verdict: classify.Verdict, thresholds: dict[str, float]) -> bool:
@@ -105,19 +110,35 @@ async def run_pass(
 
     results, chats = await fetch(since)
     for r in results:
+        name = chats[r.peer_id].name if r.peer_id in chats else r.peer_id
         if r.error:
-            report.errors.append(f"read {chats[r.peer_id].name if r.peer_id in chats else r.peer_id}: {r.error}")
+            report.errors.append(f"read {name}: {r.error}")
         elif r.has_more:
-            log(f"warning: more messages than run.limit ({run.limit}) in one window; the oldest were not read.")
+            # Moving on would drop the unread messages for good, so the window is held instead.
+            report.errors.append(
+                f"read {name}: the window holds more messages than could be read "
+                f"(run.limit {run.limit} per page); raise run.limit or run more often."
+            )
     items, _ = classify.messages_to_items(results, chats)
     report.read = len(items)
     fresh = [it for it in items if it.msg_id is not None and not state.is_sent(_key(it))]
 
-    verdicts = classify_items(fresh) if fresh else []
+    # A message that keeps failing must not hold the window (and re-run the model) forever.
+    exhausted = {_key(it) for it in fresh if state.failures(_key(it)) >= run.max_attempts}
+    if exhausted:
+        log(f"skipping {len(exhausted)} message(s) that failed {run.max_attempts} passes: {', '.join(sorted(exhausted))}")
+        fresh = [it for it in fresh if _key(it) not in exhausted]
+
+    verdicts = await asyncio.to_thread(classify_items, fresh) if fresh else []
     report.classified = len(verdicts)
-    for v in verdicts:
-        if v.error:
-            report.errors.append(f"classify {_key(v.item)}: {v.error}")
+    failed = [v for v in verdicts if v.error]
+    for v in failed:
+        report.errors.append(f"classify {_key(v.item)}: {v.error}")
+    # Everything failing at once looks like a broken model, not broken messages: blame nobody then.
+    # A lone message that fails cannot be told apart, so it is blamed (otherwise it would block forever).
+    if run.send and (len(failed) < len(verdicts) or len(verdicts) == 1):
+        for v in failed:
+            state.record_failure(_key(v.item))
 
     matches = [v for v in verdicts if passes_thresholds(v, run.thresholds)]
     report.matched = len(matches)
@@ -125,6 +146,8 @@ async def run_pass(
     if rest:
         log(f"{len(rest)} more match(es) than run.max_per_run ({run.max_per_run}); they go on the next pass.")
 
+    failed_sends: list[str] = []
+    in_a_row = 0
     for v in batch:
         text = format_candidate(v)
         if not run.send:
@@ -133,14 +156,24 @@ async def run_pass(
         result = await send(text)
         if not result.sent:
             report.errors.append(f"send {_key(v.item)}: {result.error}")
-            break  # most likely systemic (access, network): do not hammer the rest
+            failed_sends.append(_key(v.item))
+            in_a_row += 1
+            if in_a_row >= 2:
+                break  # most likely systemic (access, network): do not hammer the rest
+            continue
+        in_a_row = 0
         state.mark_sent(_key(v.item))
         report.sent += 1
+    if report.sent:  # others got through, so these failures are about the message itself
+        for key in failed_sends:
+            state.record_failure(key)
 
     if report.errors or rest:
         report.ok = False
-    else:
-        state.mark_success(now)  # the next pass reads from the start of this one: nothing falls in a gap
+    elif run.send:
+        # The next pass reads from the start of this one: nothing falls in a gap. A preview pass
+        # (send off) leaves the window alone, otherwise looking at matches would consume them.
+        state.mark_success(now)
     return report
 
 

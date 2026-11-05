@@ -176,7 +176,7 @@ async def test_send_notification_uses_settings_chat_and_reply_to(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-    monkeypatch.setattr(notifier.mcp_client, "open_session", lambda verbose=False: _Ctx())
+    monkeypatch.setattr(notifier.mcp_client, "open_session", lambda verbose=False, **kw: _Ctx())
     settings = config.NotifySettings(enabled=True, chat_id=CHAT, reply_to=273)
     result = await notifier.send_notification("hi", settings=settings)
     assert result.sent is True
@@ -184,7 +184,7 @@ async def test_send_notification_uses_settings_chat_and_reply_to(monkeypatch):
 
 
 async def test_send_notification_returns_error_when_session_cannot_open(monkeypatch):
-    def boom(verbose=False):
+    def boom(verbose=False, **kw):
         raise config.ConfigError("No Telegram session")
 
     monkeypatch.setattr(notifier.mcp_client, "open_session", boom)
@@ -310,7 +310,58 @@ async def test_send_notification_passes_the_configured_topic(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-    monkeypatch.setattr(notifier.mcp_client, "open_session", lambda verbose=False: _Ctx())
+    monkeypatch.setattr(notifier.mcp_client, "open_session", lambda verbose=False, **kw: _Ctx())
     settings = config.NotifySettings(enabled=True, chat_id=CHAT, reply_to=None, topic_id=273)
     await notifier.send_notification("hi", settings=settings)
     assert session.calls == [("send_message", {"chat_id": CHAT, "message": "hi", "reply_to_id": 273})]
+
+
+# --- Sender: one session for many messages -------------------------------------
+
+
+async def test_sender_uses_one_session_for_all_messages_and_passes_parse_mode(monkeypatch):
+    session = FakeSession()
+    opened = []
+
+    class _Ctx:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *exc):
+            return False
+
+    def fake_open(verbose=False, *, allow):
+        opened.append(allow)
+        return _Ctx()
+
+    monkeypatch.setattr(notifier.mcp_client, "open_session", fake_open)
+    sender = notifier.Sender(config.NotifySettings(True, CHAT, None), parse_mode="html")
+    first = await sender.send("one")
+    second = await sender.send("two")
+    await sender.aclose()
+    assert first.sent and second.sent
+    assert opened == [notifier.mcp_client.SEND_TOOLS]  # one server process, and it can only send
+    assert [c[1]["message"] for c in session.calls] == ["one", "two"]
+    assert all(c[1]["parse_mode"] == "html" for c in session.calls)
+
+
+async def test_sender_is_a_noop_when_disabled_and_never_raises(monkeypatch):
+    monkeypatch.setattr(notifier.mcp_client, "open_session", lambda *a, **k: pytest.fail("must not open"))
+    off = notifier.Sender(config.NotifySettings(False, CHAT, None))
+    assert (await off.send("x")).skipped is True
+    await off.aclose()
+
+    def boom(*a, **k):
+        raise RuntimeError("server did not start")
+
+    monkeypatch.setattr(notifier.mcp_client, "open_session", boom)
+    on = notifier.Sender(config.NotifySettings(True, CHAT, None))
+    result = await on.send("x")
+    assert result.sent is False and "server did not start" in result.error
+    await on.aclose()
+
+
+async def test_deliver_omits_parse_mode_unless_asked():
+    session = FakeSession()
+    await notifier.deliver(session, CHAT, "hi")
+    assert "parse_mode" not in session.calls[0][1]

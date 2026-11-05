@@ -32,6 +32,8 @@ def main() -> None:
         if name not in models:
             sys.exit(f"Unknown model {name!r}. Available: {', '.join(models)}")
         m = models[name]
+        if not m.get("revision"):
+            sys.exit(f"Model {name!r} has no pinned revision in models.yaml; refusing to fetch a moving branch.")
         print(f"==> {name}: {m['repo']}@{m['revision'][:8]}{' (code only)' if args.code_only else ''}", flush=True)
         path = snapshot_download(
             m["repo"], revision=m["revision"],
